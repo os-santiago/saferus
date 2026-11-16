@@ -32,6 +32,51 @@ class TestEnvironmentCustody(unittest.TestCase):
         d.kubectl=kubectl
         return d,state
 
+    def konflux_fixture(self,directory):
+        d,state=self.fixture(directory)
+        d.cluster_name='ai-sdlc-konflux-reviewed'
+        (d.installation/'ownership.json').unlink()
+        private_write(d.installation/'konflux-ownership.json',{'version':1,'scope':'isolated-konflux',
+            'cluster':d.cluster_name,'provider':'podman','clusterUID':state['clusterUID']})
+        private_write(d.installation/'installation.json',{'cluster':d.cluster_name,'platform':'konflux',
+            'repository':'os-santiago/saferus','environment':'ai-sdlc-production','namespace':'ai-sdlc-runtime','installationReady':True})
+        cap={'version':1,'capability':'frozen-runtime/v1','clusterUID':state['clusterUID'],'namespace':'ai-sdlc-runtime',
+             'namespaceUID':'11111111-1111-4111-8111-111111111111','nonce':'a'*48}
+        private_write(d.installation/'runtime-capability.json',cap)
+        state['runtime']={'uid':cap['namespaceUID'],'annotations':{'ai-sdlc.io/cluster-uid':state['clusterUID'],
+                          'ai-sdlc.io/runtime-capability':cap['capability'],'ai-sdlc.io/runtime-create-nonce':cap['nonce']}}
+        d.get=lambda kind,name,*args: {'metadata':state['runtime'] if name=='ai-sdlc-runtime' else {'uid':state['clusterUID']}}
+        return d,state
+
+    def test_explicit_konflux_target_preserves_original_runtime_and_application_uid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            d,state=self.konflux_fixture(directory)
+            d.cluster();d.cluster()
+            self.assertEqual(state['creates'],1)
+            self.assertEqual(json.loads((d.state/'environment-ownership.json').read_text())['cluster'],d.cluster_name)
+            with self.assertRaises(ValueError):d.destroy()
+
+    def test_konflux_scope_and_capability_drift_rejected_before_namespace_intent(self):
+        for fault in ('repository','ready','scope','cluster','capability','uid','nonce','terminating'):
+            with self.subTest(fault=fault),tempfile.TemporaryDirectory() as directory:
+                d,state=self.konflux_fixture(directory)
+                if fault in ('repository','ready'):
+                    path=d.installation/'installation.json';value=json.loads(path.read_text())
+                    value['repository' if fault=='repository' else 'installationReady']='os-santiago/homedir' if fault=='repository' else False
+                    private_write(path,value)
+                elif fault in ('scope','cluster'):
+                    path=d.installation/'konflux-ownership.json';value=json.loads(path.read_text())
+                    value[fault]='foreign';private_write(path,value)
+                elif fault=='capability':
+                    path=d.installation/'runtime-capability.json';value=json.loads(path.read_text())
+                    value['clusterUID']='22222222-2222-4222-8222-222222222222';private_write(path,value)
+                elif fault=='uid':state['runtime']['uid']='replaced'
+                elif fault=='nonce':state['runtime']['annotations']['ai-sdlc.io/runtime-create-nonce']='foreign'
+                else:state['runtime']['deletionTimestamp']='now'
+                with self.assertRaises(ValueError):d.cluster()
+                self.assertEqual(state['creates'],0)
+                self.assertFalse((d.state/'environment-intent.json').exists())
+
     def test_lost_namespace_create_reply_recovers_exact_identity_once(self):
         with tempfile.TemporaryDirectory() as directory:
             d,state=self.fixture(directory);state['lost']=True

@@ -113,3 +113,30 @@ Auditor correction: the pressure client rejects redirects with the existing
 separate path; none of those destinations were contacted. A request timeout
 regression verifies no automatic retry. The corrected tool passed another real
 20-request run with stable workload identity and normal X.509 checks.
+
+## Explicit Konflux test environment — 2026-11-16
+
+The test-production baseline now supports the explicitly selected, installer-owned
+Konflux cluster used by AI-SDLC's build infrastructure. Selection validates the
+cluster name before constructing paths and derives matching runtime/application
+state roots. The legacy `ai-sdlc-saferus` defaults remain available. Before an
+application namespace intent, setup checks the Konflux owner, Saferus runtime
+scope and the original runtime namespace UID/creation nonce against the live API.
+It cannot delete the shared cluster or adopt a namespace by name.
+
+Cold installation and reapplication on Kubernetes v1.36.4 passed with the same
+application namespace UID and console identity. Real API, TLS, authentication,
+authorization, encryption/tampering, revocation, audit-redaction and
+positive/negative/positive NetworkPolicy checks passed. Firefox desktop/mobile
+checks passed with normal X.509 validation and separate CA trust. The bounded
+pressure check passed with six successful revocations, fourteen HTTP 429
+rejections and both recovery checks. The 41 Python/Helm tests and Helm lint pass.
+See the [sanitized evidence](evidence/2026-11-16-konflux-environment.json).
+
+Two findings from the preventive audit were corrected before the cold install:
+the runtime state default now follows the selected cluster, and validation occurs
+before custody path derivation in all three entrypoints. Explicit alternative
+paths still require matching live identities. This establishes the baseline
+application beside the builder; it is not an autonomous promotion, release or
+issue-to-production run. Synthetic co-located custody and single-node limitations
+remain; full platform readiness belongs to the separate AI-SDLC preflight.

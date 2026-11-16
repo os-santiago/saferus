@@ -13,6 +13,7 @@ import secrets
 import stat
 
 from .demo import Demo, private_write
+from .environment_selection import validate_selected_cluster
 
 
 class Environment(Demo):
@@ -21,6 +22,7 @@ class Environment(Demo):
     cluster_name = 'ai-sdlc-saferus'
 
     def __init__(self, args):
+        self.cluster_name=validate_selected_cluster(getattr(args,'ai_sdlc_cluster','ai-sdlc-saferus'))
         super().__init__(args)
         self.installation = args.ai_sdlc_state.absolute()
         if self.installation == self.state:
@@ -40,12 +42,36 @@ class Environment(Demo):
         finally:
             os.close(fd)
 
+    def runtime_owner(self):
+        konflux=self.cluster_name!='ai-sdlc-saferus'
+        filename='konflux-ownership.json' if konflux else 'ownership.json'
+        marker=json.loads(self.private_input(self.installation/filename,public=True))
+        expected={'cluster','provider','clusterUID'} | ({'version','scope'} if konflux else set())
+        if (not isinstance(marker,dict) or set(marker)!=expected or marker['cluster']!=self.cluster_name
+                or marker['provider']!=self.env['KIND_EXPERIMENTAL_PROVIDER']
+                or not isinstance(marker['clusterUID'],str)
+                or not re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}',marker['clusterUID'])
+                or konflux and (type(marker['version']) is not int or marker['version']!=1 or marker['scope']!='isolated-konflux')):
+            raise ValueError('Expected the explicitly selected AI-SDLC installation owner')
+        capability=None
+        if konflux:
+            installed=json.loads(self.private_input(self.installation/'installation.json',public=True))
+            if (not isinstance(installed,dict) or installed.get('cluster')!=self.cluster_name or installed.get('platform')!='konflux'
+                    or installed.get('repository')!='os-santiago/saferus' or installed.get('environment')!=self.namespace
+                    or installed.get('namespace')!='ai-sdlc-runtime' or installed.get('installationReady') is not True):
+                raise ValueError('Selected Konflux runtime must be installed for Saferus test production')
+            capability=json.loads(self.private_input(self.installation/'runtime-capability.json'))
+            if (not isinstance(capability,dict) or set(capability)!={'version','capability','clusterUID','namespace','namespaceUID','nonce'}
+                    or type(capability['version']) is not int or capability['version']!=1
+                    or capability['capability']!='frozen-runtime/v1' or capability['clusterUID']!=marker['clusterUID']
+                    or capability['namespace']!='ai-sdlc-runtime'
+                    or not re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}',str(capability['namespaceUID']))
+                    or not re.fullmatch(r'[a-f0-9]{48}',str(capability['nonce']))):
+                raise ValueError('Selected Konflux runtime capability identity differs')
+        return marker,capability
+
     def cluster(self):
-        marker = json.loads(self.private_input(self.installation / 'ownership.json', public=True))
-        if (set(marker) != {'cluster', 'provider', 'clusterUID'} or marker['cluster'] != self.cluster_name
-                or marker['provider'] != self.env['KIND_EXPERIMENTAL_PROVIDER']
-                or not re.fullmatch(r'[a-f0-9-]{36}', marker['clusterUID'])):
-            raise ValueError('Expected the dedicated AI-SDLC Saferus installation owner')
+        marker,capability=self.runtime_owner()
         kubeconfig = self.private_input(self.installation / 'kubeconfig')
         destination = self.state / 'kubeconfig'
         if destination.exists() or destination.is_symlink():
@@ -56,6 +82,13 @@ class Environment(Demo):
         live = self.get('namespace', 'kube-system', 'default')['metadata']['uid']
         if marker['clusterUID'] != live:
             raise ValueError('AI-SDLC cluster UID differs from its owner record')
+        if capability is not None:
+            runtime=self.get('namespace','ai-sdlc-runtime','default')['metadata']
+            expected_annotations={'ai-sdlc.io/cluster-uid':live,'ai-sdlc.io/runtime-capability':capability['capability'],
+                                  'ai-sdlc.io/runtime-create-nonce':capability['nonce']}
+            if (runtime.get('uid')!=capability['namespaceUID'] or runtime.get('deletionTimestamp')
+                    or any(runtime.get('annotations',{}).get(key)!=value for key,value in expected_annotations.items())):
+                raise ValueError('Original Konflux runtime namespace identity changed')
         intent_path = self.state / 'environment-intent.json'
         owner_path = self.state / 'environment-ownership.json'
         if intent_path.exists() or intent_path.is_symlink():

@@ -482,12 +482,13 @@ def main():
     parser.add_argument('--confirm-local-demo',action='store_true',help='Confirm deletion of the owned synthetic demo cluster and local custody')
     parser.add_argument('--provider',choices=['podman','docker'],default='podman')
     parser.add_argument('--state',type=Path)
-    parser.add_argument('--ai-sdlc-state',type=Path,default=Path.home()/'.local/state/ai-sdlc/ai-sdlc-saferus')
+    parser.add_argument('--ai-sdlc-state',type=Path)
+    parser.add_argument('--ai-sdlc-cluster',default='ai-sdlc-saferus',help='Explicit existing Konflux cluster, or the default dedicated kind cluster')
     args = parser.parse_args()
     external = args.command in ('test-environment','verify-environment')
-    if args.state is None:
-        args.state = Path.home()/'.local/state/saferus'/('ai-sdlc-production' if external else 'demo')
     try:
+        from .environment_selection import configure
+        configure(args,external=external)
         if args.command=='tools':
             from .bootstrap import ensure
             print(json.dumps({name:ensure(name) for name in ('kind','kubectl','helm')},indent=2))
