@@ -150,6 +150,23 @@ The separate synthetic-certificate test checks valid TLS, wrong SAN and an
 untrusted CA. See [validation](docs/validation.md)
 for observed results and limitations.
 
+A bounded synthetic concurrency check exercises saturation rejection and recovery:
+
+```bash
+python3 -m tools.verify_console_pressure --output /tmp/saferus-pressure.json
+# Or select the existing AI-SDLC test environment:
+python3 -m tools.verify_console_pressure \
+  --ai-sdlc-state ~/.local/state/ai-sdlc/ai-sdlc-saferus \
+  --output /tmp/saferus-test-pressure.json
+```
+
+It sends exactly 20 fixed synthetic requests, including two bursts of eight.
+Successful responses must confirm verification and token revocation; saturation
+must return the bounded HTTP 429 response, and sequential requests must recover.
+The report binds the stable Deployment UID, generation and immutable image.
+TLS verification remains enabled. Timings include loopback port forwarding and
+are observations, not a capacity benchmark, percentile estimate or enterprise SLO.
+
 ## Remove the demo
 
 ```bash
