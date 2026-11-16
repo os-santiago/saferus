@@ -91,16 +91,29 @@ class Environment(Demo):
     def destroy(self):
         raise ValueError('Test environment setup cannot delete the shared AI-SDLC cluster')
 
+    def existing_console(self):
+        raw = self.kubectl('get', 'deployment', 'saferus-console', '-n', self.namespace, '--ignore-not-found', '-o', 'json')
+        if not raw.strip():
+            return None
+        live = json.loads(raw)
+        containers = live.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
+        saved = self.state / 'values.json'
+        expected = json.loads(saved.read_text()).get('console', {}).get('image') if saved.exists() else None
+        if len(containers) != 1 or containers[0].get('image') != expected:
+            raise ValueError('Console image changed since bootstrap; use verification, not baseline reinstallation')
+        return expected
+
     def install(self):
         self.cluster()
-        # Reapplying bootstrap after an autonomous image promotion must preserve
-        # that image; otherwise setup would silently roll back successful work.
-        raw = self.kubectl('get', 'deployment', 'saferus-console', '-n', self.namespace, '--ignore-not-found', '-o', 'json')
-        if raw.strip():
-            live = json.loads(raw)
-            containers = live.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
-            saved = self.state / 'values.json'
-            expected = json.loads(saved.read_text()).get('console', {}).get('image') if saved.exists() else None
-            if len(containers) != 1 or containers[0].get('image') != expected:
-                raise ValueError('Console image changed since bootstrap; use verification, not baseline reinstallation')
+        # Reapplication is observation-only once the console exists. In
+        # particular, no Helm reconciliation may undo a concurrent promotion.
+        if self.existing_console() is not None:
+            return
         super().install()
+
+    def before_console_create(self):
+        # Initial setup must not adopt a console that appeared while its image
+        # was being built. A running autonomous deployment has a preinstalled
+        # Deployment UID; absence is not authority to create one.
+        if self.existing_console() is not None:
+            raise ValueError('Console appeared during baseline build; refusing reconciliation')

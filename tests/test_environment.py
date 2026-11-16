@@ -77,3 +77,40 @@ class TestEnvironmentCustody(unittest.TestCase):
             with patch.object(Demo,'install') as install, self.assertRaisesRegex(ValueError,'Console image changed'):
                 d.install()
             install.assert_not_called()
+
+    def test_reapply_existing_console_does_not_reconcile_helm_or_rebuild(self):
+        from tools import console
+        with tempfile.TemporaryDirectory() as directory:
+            d,state=self.fixture(directory);d.cluster()
+            image='localhost/baseline@sha256:'+'a'*64
+            with patch.object(d,'existing_console',return_value=image), patch.object(Demo,'install') as base, patch.object(d,'run',create=True) as run:
+                d.install()
+                self.assertEqual(console.install(d),image)
+                base.assert_not_called();run.assert_not_called()
+
+    def test_console_appearing_during_build_prevents_reconciliation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            d,_=self.fixture(directory)
+            with patch.object(d,'existing_console',return_value='reviewed-image'):
+                with self.assertRaisesRegex(ValueError,'appeared'):
+                    d.before_console_create()
+
+    def test_promotion_during_console_image_import_never_reaches_helm(self):
+        from tools import console
+        with tempfile.TemporaryDirectory() as directory:
+            d,_=self.fixture(directory)
+            image={'tag':None};commands=[]
+            def run(command,**kwargs):
+                commands.append(command)
+                if command[1]=='build':image['tag']=command[3]
+                elif command[1]=='save':Path(command[3]).write_bytes(b'synthetic OCI fixture')
+                elif command[-2:]==['images','ls']:
+                    return (image['tag']+' application/vnd.oci.image.manifest.v1+json sha256:'+'a'*64+' 100 linux/amd64\n').encode()
+                return b''
+            d.run=run
+            with patch.object(d,'existing_console',side_effect=[None,'promoted-image']):
+                with self.assertRaisesRegex(ValueError,'appeared'):
+                    console.install(d)
+            self.assertTrue(any(c[1]=='build' for c in commands))
+            self.assertTrue(any('import' in c for c in commands))
+            self.assertFalse(any('upgrade' in c for c in commands))

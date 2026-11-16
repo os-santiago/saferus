@@ -12,6 +12,10 @@ from .demo import ROOT, private_write
 
 
 def install(d):
+    if hasattr(d, 'existing_console'):
+        existing = d.existing_console()
+        if existing is not None:
+            return existing
     source = hashlib.sha256()
     for p in sorted([ROOT/'go.mod',ROOT/'Containerfile',*(ROOT/'cmd').rglob('*.go'),*(ROOT/'web').rglob('*')]):
         if p.is_file():
@@ -36,6 +40,8 @@ def install(d):
         raise ValueError('Imported digest alias differs')
     if not aliases:
         d.run([provider,'exec',node,'ctr','-n','k8s.io','images','tag',tag,image])
+    if hasattr(d, 'before_console_create'):
+        d.before_console_create()
     if not (d.state/'console.crt').exists():
         openssl = d.tools['openssl']
         d.run([openssl,'req','-new','-newkey','ec','-pkeyopt','ec_paramgen_curve:P-256','-nodes',
@@ -50,6 +56,8 @@ def install(d):
     values = json.loads((d.state/'values.json').read_text())
     values['console']={'enabled':True,'image':image}
     private_write(d.state/'values.json',values)
+    if hasattr(d, 'before_console_create'):
+        d.before_console_create()
     d.run([d.tools['helm'],'--kubeconfig',str(d.state/'kubeconfig'),'upgrade','saferus',str(ROOT/'charts/saferus'),
         '-n',d.namespace,'-f',str(d.state/'values.json'),'--wait','--timeout','180s'],timeout=210)
     return image

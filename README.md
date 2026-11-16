@@ -83,8 +83,8 @@ an alternate location. Application custody is separate, under
 
 Setup verifies the live cluster UID, records its namespace creation intent and
 rejects foreign namespaces or changed UIDs. It cannot destroy the AI-SDLC
-cluster. Reapplying baseline setup refuses to replace an image changed by a
-later promotion. This is initial infrastructure setup, not an AI-SDLC workflow
+cluster. Once the console exists, reapplication verifies it without running Helm or
+rebuilding its image; it refuses a baseline image changed by a later promotion. This is initial infrastructure setup, not an AI-SDLC workflow
 stage: autonomous requests still enter only through issues.
 
 To verify the browser against this environment with normal certificate checks:
