@@ -3,6 +3,7 @@
 The fixture schedules no Pods and never accesses AI-SDLC workflow endpoints.
 """
 import argparse
+import base64
 import json
 import secrets
 import subprocess
@@ -41,7 +42,7 @@ def main():
         with tempfile.TemporaryDirectory(prefix='saferus-create-race-') as directory:
             d=object.__new__(Environment);d.state=Path(directory);d.namespace=namespace;d.cluster=lambda:None
             private_write(d.state/'environment-intent.json',{'nonce':secrets.token_hex(24)})
-            state={"inject":True}
+            state={"inject":True,"injectSecret":True}
             def kubectl(*argv,data=None,**kwargs):
                 raw=call(*argv,data=data)
                 if argv[:2]==('create','--dry-run=client'):
@@ -50,6 +51,10 @@ def main():
                         value['spec']['replicas']=0
                         state['deployment']=value
                         return json.dumps(value).encode()
+                if argv[:2]==('get','Secret') and not raw.strip() and state['injectSecret']:
+                    foreign=json.loads(json.dumps(state['tls']))
+                    foreign['data']['tls.key']=base64.b64encode(b'concurrent synthetic fixture key').decode()
+                    state['foreignSecret']=json.loads(call('create','-n',namespace,'-f','-','-o','json',data=json.dumps(foreign).encode()))
                 if argv[:2]==('get','Deployment') and not raw.strip() and state['inject']:
                     foreign=json.loads(json.dumps(state['deployment']))
                     foreign['spec']['template']['spec']['containers'][0]['image']='registry.invalid/promoted@sha256:'+'b'*64
@@ -57,6 +62,21 @@ def main():
                     # Return the old absent GET after a concurrent object exists.
                 return raw
             d.kubectl=kubectl
+            state['tls']={'apiVersion':'v1','kind':'Secret','metadata':{'name':'saferus-console-tls','namespace':namespace},
+                          'type':'Opaque','data':{'tls.crt':base64.b64encode(b'synthetic certificate').decode(),'tls.key':base64.b64encode(b'synthetic fixture key').decode()}}
+            try:
+                d.create_console_resource(state['tls'])
+                raise ValueError('Expected atomic Secret create conflict')
+            except Conflict:
+                pass
+            secret=json.loads(call('get','secret','saferus-console-tls','-n',namespace,'-o','json'))
+            if secret['metadata']['uid']!=state['foreignSecret']['metadata']['uid'] or secret['data']!=state['foreignSecret']['data']:
+                raise ValueError('Concurrent TLS Secret was modified')
+            call('delete','--raw','/api/v1/namespaces/'+namespace+'/secrets/saferus-console-tls','-f','-',
+                 data=json.dumps({'apiVersion':'v1','kind':'DeleteOptions','preconditions':{'uid':secret['metadata']['uid']}}).encode())
+            call('wait','--for=delete','secret/saferus-console-tls','-n',namespace,'--timeout=20s')
+            state['injectSecret']=False
+            d.create_console_resource(state['tls'])
             try:
                 d.create_console(rendered)
                 raise ValueError('Expected atomic create conflict')
@@ -69,7 +89,7 @@ def main():
             if json.loads(call('get','pods','-n',namespace,'-o','json'))['items']:
                 raise ValueError('Fixture unexpectedly scheduled a Pod')
             owners=json.loads((d.state/'console-resources.json').read_text())
-            if set(owners)!={'NetworkPolicy','Service'}:
+            if set(owners)!={'Secret','NetworkPolicy','Service'}:
                 raise ValueError('Unacknowledged deployment was adopted')
             call('delete','--raw','/apis/apps/v1/namespaces/'+namespace+'/deployments/saferus-console','-f','-',
                 data=json.dumps({'apiVersion':'v1','kind':'DeleteOptions','preconditions':{'uid':current['metadata']['uid']}}).encode())
@@ -78,9 +98,9 @@ def main():
             d.create_console(rendered)
             owned=json.loads((d.state/'console-resources.json').read_text())
             d.create_console(rendered)
-            if json.loads((d.state/'console-resources.json').read_text())!=owned or set(owned)!={'NetworkPolicy','Service','Deployment'}:
+            if json.loads((d.state/'console-resources.json').read_text())!=owned or set(owned)!={'Secret','NetworkPolicy','Service','Deployment'}:
                 raise ValueError('Create-only recovery changed resource identities')
-            report.update(status='passed',atomicCreateConflict=True,concurrentUIDPreserved=True,concurrentImagePreserved=True,isolationCreatedFirst=True,positiveCreateAndReapply=True)
+            report.update(status='passed',atomicCreateConflict=True,concurrentUIDPreserved=True,concurrentImagePreserved=True,isolationCreatedFirst=True,positiveCreateAndReapply=True,concurrentSecretUIDAndBytesPreserved=True)
     finally:
         call('delete','--raw','/api/v1/namespaces/'+namespace,'-f','-',data=json.dumps({'apiVersion':'v1','kind':'DeleteOptions','preconditions':{'uid':created['metadata']['uid']}}).encode())
         call('wait','--for=delete','namespace/'+namespace,'--timeout=25s')

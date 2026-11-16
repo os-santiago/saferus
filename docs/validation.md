@@ -49,7 +49,7 @@ positive/negative/positive controls passed. Reapplying the same setup passed
 without replacing custody. Desktop and mobile Firefox walkthroughs passed with
 normal X.509 verification in isolated trust profiles.
 
-The 29 Python/Helm tests pass, including namespace lost-create-response recovery,
+The 30 Python/Helm tests pass, including namespace lost-create-response recovery,
 foreign namespace/cluster/UID rejection, private kubeconfig handling and refusing
 to overwrite a promoted console image. Helm lint passes. The original standalone
 cluster remains separate; this command cannot delete the AI-SDLC cluster.
@@ -72,3 +72,8 @@ AlreadyExists and preserved its UID/image. The positive create/reapply control
 then passed with stable owned UIDs. The fixture scheduled no Pods and removed
 its namespace with a UID precondition. Run `python -m
 tools.verify_console_create_race --output /tmp/saferus-create-race.json` to repeat.
+
+The same create-only protocol also covers the console TLS Secret. A second real
+race inserts a concurrent Secret after GET and before create: its UID and bytes
+remain unchanged. No apply fallback is permitted for the test console Secret.
+The combined positive and conflict fixtures passed after this correction.

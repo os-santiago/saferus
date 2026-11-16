@@ -142,3 +142,21 @@ class TestEnvironmentCustody(unittest.TestCase):
             self.assertEqual(writes,['NetworkPolicy','Service','Deployment'])
             self.assertEqual(current['Deployment'],{'metadata':{'uid':'concurrent-owner'},'image':'promoted'})
             self.assertEqual(set(json.loads((d.state/'console-resources.json').read_text())),{'NetworkPolicy','Service'})
+
+    def test_tls_secret_create_race_preserves_concurrent_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            d,_=self.fixture(directory);d.cluster=lambda:None
+            private_write(d.state/'environment-intent.json',{'nonce':'a'*48})
+            foreign={'metadata':{'uid':'foreign-secret'},'data':{'tls.key':'concurrent-bytes'}}
+            writes=[]
+            def kubectl(*args,data=None,**kwargs):
+                if args[0]=='get':return b''
+                self.assertEqual(args[0],'create')
+                writes.append(args[0])
+                raise ValueError('AlreadyExists')
+            d.kubectl=kubectl
+            with self.assertRaisesRegex(ValueError,'AlreadyExists'):
+                d.create_console_resource({'kind':'Secret','metadata':{'name':'saferus-console-tls'},'data':{'tls.key':'baseline-bytes'}})
+            self.assertEqual(writes,['create'])
+            self.assertEqual(foreign['data']['tls.key'],'concurrent-bytes')
+            self.assertFalse((d.state/'console-resources.json').exists())

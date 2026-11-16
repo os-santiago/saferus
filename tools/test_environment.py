@@ -134,28 +134,36 @@ class Environment(Demo):
             objects[kind]=value
         if set(objects)!= {'Deployment','Service','NetworkPolicy'}:
             raise ValueError('Incomplete console manifests')
-        path=self.state/'console-resources.json'
-        owners=json.loads(self.private_input(path)) if path.exists() else {}
         # Isolation exists before any console Pod can be scheduled.
         for kind in ('NetworkPolicy','Service','Deployment'):
-            value=objects[kind]
-            digest=hashlib.sha256(json.dumps(value,sort_keys=True).encode()).hexdigest()
-            value['metadata'].setdefault('annotations',{}).update({
-                'saferus.io/creation-nonce':intent['nonce'],'saferus.io/baseline-manifest':digest})
-            raw=self.kubectl('get',kind,'saferus-console','-n',self.namespace,'--ignore-not-found','-o','json')
-            if raw.strip():
-                current=json.loads(raw)
-            else:
-                if kind in owners:raise ValueError('Owned console resource disappeared')
-                # If a resource appears after GET, create returns AlreadyExists.
-                # No apply/patch/Helm fallback may overwrite the concurrent object.
-                current=json.loads(self.kubectl('create','-n',self.namespace,'-f','-','-o','json',data=json.dumps(value).encode()))
-            meta=current.get('metadata',{})
-            annotations=meta.get('annotations',{})
-            if (not meta.get('uid') or meta.get('deletionTimestamp')
-                    or annotations.get('saferus.io/creation-nonce')!=intent['nonce']
-                    or annotations.get('saferus.io/baseline-manifest')!=digest
-                    or (kind in owners and owners[kind]!=meta['uid'])):
-                raise ValueError('Console resource ownership changed')
-            owners[kind]=meta['uid'];private_write(path,owners)
+            self.create_console_resource(objects[kind])
         self.kubectl('rollout','status','deployment/saferus-console','-n',self.namespace,'--timeout=180s',timeout=200)
+
+    def create_console_resource(self, value):
+        """The TLS Secret and all workload resources share create-only custody."""
+        self.cluster()
+        intent=json.loads(self.private_input(self.state/'environment-intent.json'))
+        value=json.loads(json.dumps(value))
+        kind=value.get('kind')
+        name='saferus-console-tls' if kind=='Secret' else 'saferus-console'
+        if kind not in ('Secret','NetworkPolicy','Service','Deployment') or value.get('metadata',{}).get('name')!=name:
+            raise ValueError('Unexpected console resource')
+        path=self.state/'console-resources.json'
+        owners=json.loads(self.private_input(path)) if path.exists() else {}
+        digest=hashlib.sha256(json.dumps(value,sort_keys=True).encode()).hexdigest()
+        value['metadata'].setdefault('annotations',{}).update({
+            'saferus.io/creation-nonce':intent['nonce'],'saferus.io/baseline-manifest':digest})
+        raw=self.kubectl('get',kind,name,'-n',self.namespace,'--ignore-not-found','-o','json')
+        if raw.strip():
+            current=json.loads(raw)
+        else:
+            if kind in owners:raise ValueError('Owned console resource disappeared')
+            current=json.loads(self.kubectl('create','-n',self.namespace,'-f','-','-o','json',data=json.dumps(value).encode()))
+        meta=current.get('metadata',{})
+        annotations=meta.get('annotations',{})
+        if (not meta.get('uid') or meta.get('deletionTimestamp')
+                or annotations.get('saferus.io/creation-nonce')!=intent['nonce']
+                or annotations.get('saferus.io/baseline-manifest')!=digest
+                or (kind in owners and owners[kind]!=meta['uid'])):
+            raise ValueError('Console resource ownership changed')
+        owners[kind]=meta['uid'];private_write(path,owners)
