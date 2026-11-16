@@ -1,4 +1,6 @@
 import json
+import ssl
+import urllib.error
 from pathlib import Path
 import tempfile
 import unittest
@@ -12,7 +14,7 @@ class VaultFixture:
         self.fail=fail;self.failed=False;self.mounts={};self.seed=False;self.key=False;self.auth=False
         self.root=True;self.seed_writes=0;self.mount_writes=0;self.revocations=0
 
-    def call(self, method, path, body=None, token=None, expected=(200,204)):
+    def call(self, method, path, body=None, token=None, expected=(200,204), timeout=10):
         if path=='sys/health':return {'initialized':True,'sealed':False}
         if path=='sys/leader':return {'is_self':True}
         if path=='sys/audit':return {'data':{'saferus/':{'type':'file','options':{'file_path':'/openbao/audit/audit.json'}}}}
@@ -48,6 +50,33 @@ class VaultFixture:
 
 
 class BootstrapRecoveryTests(unittest.TestCase):
+    def test_listener_retries_only_reads_then_initializes_once(self):
+        class StartingVault(VaultFixture):
+            def __init__(self):super().__init__();self.reads=0;self.inits=0
+            def call(self,method,path,body=None,token=None,expected=(200,204),timeout=10):
+                if path=='sys/health':
+                    self.reads+=1
+                    if self.reads<4:raise urllib.error.URLError(ConnectionRefusedError())
+                    return {'initialized':False,'sealed':False}
+                if path=='sys/init':
+                    self.inits+=1
+                    return {'keys_base64':[],'root_token':'fixture-root'}
+                return super().call(method,path,body,token,expected,timeout)
+        with tempfile.TemporaryDirectory() as directory:
+            demo=object.__new__(Demo);demo.state=Path(directory);api=StartingVault()
+            demo.bootstrap(api)
+            self.assertEqual((api.reads,api.inits),(4,1))
+
+    def test_listener_certificate_errors_are_not_retried(self):
+        class InvalidTLS:
+            calls=0
+            def call(self,*args,**kwargs):
+                self.calls+=1
+                raise urllib.error.URLError(ssl.SSLCertVerificationError('fixture untrusted certificate'))
+        api=InvalidTLS();demo=object.__new__(Demo)
+        with self.assertRaises(urllib.error.URLError):demo.health_ready(api)
+        self.assertEqual(api.calls,1)
+
     def test_interruption_preserves_secret_key_and_revokes_original_root(self):
         for failure in [('POST','sys/mounts/secret'),('POST','secret/data/demo/service'),
                         ('POST','transit/keys/demo'),('POST','auth/kubernetes/role/demo'),('POST','auth/token/revoke-self')]:

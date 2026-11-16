@@ -1,14 +1,23 @@
-"""Exercise the real local console. Trust only its known certificate SPKI."""
+"""Exercise the real console with normal X.509 validation and isolated CA trust."""
 import argparse
-import base64
-import hashlib
 import json
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 
 from playwright.sync_api import sync_playwright, expect
 from tools.demo import Demo
+
+
+def trusted_context(playwright, ca, profile):
+    certutil=shutil.which('certutil')
+    if certutil is None:raise ValueError('Browser verification requires NSS certutil (nss-tools or libnss3-tools)')
+    subprocess.run([certutil,'-N','-d','sql:'+str(profile),'--empty-password'],check=True,capture_output=True,timeout=10)
+    subprocess.run([certutil,'-A','-d','sql:'+str(profile),'-n','saferus-demo-ca','-t','C,,','-i',str(ca)],check=True,capture_output=True,timeout=10)
+    return playwright.firefox.launch_persistent_context(str(profile),ignore_https_errors=False,
+        firefox_user_prefs={'security.enterprise_roots.enabled':False,
+            'security.certerrors.mitm.auto_enable_enterprise_roots':False})
 
 
 def main():
@@ -19,18 +28,15 @@ def main():
     args=parser.parse_args()
     if not (args.state/'ownership.json').exists():raise ValueError('No installed demo')
     d=Demo(args);d.cluster()
-    public=subprocess.check_output(['openssl','x509','-in',str(d.state/'console.crt'),'-pubkey','-noout'])
-    der=subprocess.check_output(['openssl','pkey','-pubin','-outform','DER'],input=public)
-    pin=base64.b64encode(hashlib.sha256(der).digest()).decode()
     args.output.mkdir(mode=0o700,parents=True,exist_ok=True)
-    with d.api('deployment/saferus-console',8443) as api, sync_playwright() as playwright:
+    with d.api('deployment/saferus-console',8443) as api, sync_playwright() as playwright, tempfile.TemporaryDirectory(prefix="saferus-browser-") as profile:
         origin=api.origin.removesuffix('/v1/')
-        browser=playwright.chromium.launch(args=['--ignore-certificate-errors-spki-list='+pin])
+        context=trusted_context(playwright,d.state/'ca.crt',Path(profile))
         try:
+            context.route('**/*',lambda route: route.continue_() if route.request.url.startswith(origin+'/') else route.abort())
             for name,width,height in [('desktop',1280,900),('mobile',390,844)]:
-                context=browser.new_context(viewport={'width':width,'height':height})
-                context.route('**/*',lambda route: route.continue_() if route.request.url.startswith(origin+'/') else route.abort())
                 page=context.new_page()
+                page.set_viewport_size({'width':width,'height':height})
                 page.goto(origin,wait_until='networkidle')
                 expect(page.get_by_role('heading',name='Verify workload access')).to_be_visible()
                 page.get_by_role('button',name='Run verification').click()
@@ -40,11 +46,11 @@ def main():
                 if not page.evaluate('document.documentElement.scrollWidth <= innerWidth'):
                     raise ValueError('Horizontal overflow in '+name)
                 page.screenshot(path=str(args.output/(name+'.png')),full_page=True)
-                context.close()
+                page.close()
         finally:
-            browser.close()
+            context.close()
     report={'status':'passed','desktop':True,'mobile':True,'realWorkloadAPI':True,
-        'tlsTrust':'explicit locally installed server certificate SPKI; no blanket HTTPS bypass',
+        'tlsTrust':'normal Firefox X.509 verification; only demo CA added to a disposable NSS profile',
         'autonomousAISDLCE2E':False}
     (args.output/'browser.json').write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(report))

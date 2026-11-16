@@ -8,6 +8,7 @@ import hashlib
 import ipaddress
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import shutil
@@ -62,14 +63,14 @@ class API:
             urllib.request.HTTPSHandler(context=context), NoRedirect())
         self.origin = 'https://127.0.0.1:' + str(port) + '/v1/'
 
-    def call(self, method, path, body=None, token=None, expected=(200, 204)):
+    def call(self, method, path, body=None, token=None, expected=(200, 204), timeout=10):
         headers = {'Content-Type': 'application/json'}
         if token:
             headers['X-Vault-Token'] = token
         data = None if body is None else json.dumps(body).encode()
         req = urllib.request.Request(self.origin + path, data=data, method=method, headers=headers)
         try:
-            response = self.opener.open(req, timeout=10)
+            response = self.opener.open(req, timeout=min(timeout,10))
         except urllib.error.HTTPError as exc:
             response = exc
         with response:
@@ -124,6 +125,52 @@ class Demo:
     def apply(self, value):
         return self.kubectl('apply', '-f', '-', data=json.dumps(value).encode())
 
+    def creation_config(self, nonce):
+        return {'kind':'Cluster','apiVersion':'kind.x-k8s.io/v1alpha4',
+            'networking':{'apiServerAddress':'127.0.0.1'},
+            'nodes':[{'role':'control-plane','image':NODE,'labels':{'saferus.io/creation':nonce}}]}
+
+    def creation_intent(self):
+        path=self.state/'creation-intent.json'
+        if path.is_symlink():raise ValueError('Creation intent cannot be a symlink')
+        known=json.loads(path.read_text())
+        if (set(known)!={'version','cluster','provider','nonce','configSHA256'} or known['version']!=1
+                or known['cluster']!=CLUSTER or known['provider']!=self.env['KIND_EXPERIMENTAL_PROVIDER']
+                or not isinstance(known['nonce'],str) or not re.fullmatch('[a-f0-9]{48}',known['nonce'])):
+            raise ValueError('Creation intent differs from this demo')
+        config=self.creation_config(known['nonce'])
+        digest=hashlib.sha256(json.dumps(config,sort_keys=True).encode()).hexdigest()
+        if known['configSHA256']!=digest:raise ValueError('Creation configuration changed')
+        path=self.state/'kind.json'
+        if path.is_symlink() or (path.exists() and json.loads(path.read_text())!=config):
+            raise ValueError('Creation configuration differs from intent')
+        return known
+
+    def recover_creation(self, known):
+        # Node labels are observed through the authenticated Kubernetes API.
+        # Container names and kind's inventory are not ownership evidence.
+        nodes=json.loads(self.kubectl('get','nodes','-o','json'))['items']
+        if (len(nodes)!=1 or nodes[0]['metadata']['name']!=CLUSTER+'-control-plane'
+                or nodes[0]['metadata'].get('labels',{}).get('saferus.io/creation')!=known['nonce']):
+            raise ValueError('Incomplete cluster lacks the original creation identity; inspection required')
+        uid=self.get('namespace','kube-system','default')['metadata']['uid']
+        if not isinstance(uid,str) or not uid:raise ValueError('Cluster UID unavailable')
+        os.chmod(self.state/'kubeconfig',0o600)
+        private_write(self.state/'ownership.json',{'cluster':CLUSTER,'provider':known['provider'],'clusterUID':uid})
+
+    def clear_absent_creation(self):
+        self.creation_intent()
+        provider=self.env['KIND_EXPERIMENTAL_PROVIDER']
+        for selector in ('label=io.x-k8s.kind.cluster='+CLUSTER,'name='+CLUSTER+'-control-plane'):
+            if self.run([provider,'ps','--all','--filter',selector,'--format','{{.ID}}']).strip():
+                raise ValueError('Partial provider resources remain; inspection required, no name-only adoption')
+        paths=[self.state/name for name in ('kubeconfig','kind.json','creation-intent.json')]
+        for path in paths:
+            if path.is_symlink() or (path.exists() and (not path.is_file() or path.stat().st_uid!=os.getuid())):
+                raise ValueError('Unsafe partial creation file')
+        for path in paths:
+            if path.exists():path.unlink()
+
     def cluster(self):
         receipt = self.state / 'ownership.json'
         existing = self.run([self.tools['kind'], 'get', 'clusters']).decode().splitlines()
@@ -132,21 +179,37 @@ class Demo:
             if known.get('provider')!=self.env['KIND_EXPERIMENTAL_PROVIDER'] or CLUSTER not in existing or known.get('clusterUID') != self.get('namespace', 'kube-system', 'default')['metadata']['uid']:
                 raise ValueError('Owned cluster identity changed')
             return
-        if CLUSTER in existing:
+        intent=self.state/'creation-intent.json'
+        if intent.exists() or intent.is_symlink():
+            known=self.creation_intent()
+            if CLUSTER in existing:
+                self.recover_creation(known)
+                return
+            self.clear_absent_creation()
+        elif CLUSTER in existing:
             raise ValueError('Refusing to adopt an unowned cluster')
         for name in ('kubeconfig', 'kind.json'):
             if (self.state / name).exists() or (self.state / name).is_symlink():
                 raise ValueError('Incomplete installation requires inspection')
-        private_write(self.state / 'kind.json', {'kind':'Cluster','apiVersion':'kind.x-k8s.io/v1alpha4',
-            'networking':{'apiServerAddress':'127.0.0.1'},'nodes':[{'role':'control-plane','image':NODE}]})
+        nonce=secrets.token_hex(24);config=self.creation_config(nonce)
+        known={'version':1,'cluster':CLUSTER,'provider':self.env['KIND_EXPERIMENTAL_PROVIDER'],
+            'nonce':nonce,'configSHA256':hashlib.sha256(json.dumps(config,sort_keys=True).encode()).hexdigest()}
+        private_write(intent,known)
+        private_write(self.state / 'kind.json',config)
         self.run([self.tools['kind'], 'create', 'cluster', '--name', CLUSTER, '--config', str(self.state / 'kind.json'),
             '--kubeconfig', str(self.state / 'kubeconfig'), '--wait', '180s'], timeout=240)
-        os.chmod(self.state / 'kubeconfig', 0o600)
-        private_write(receipt, {'cluster':CLUSTER,'provider':self.env['KIND_EXPERIMENTAL_PROVIDER'],
-            'clusterUID':self.get('namespace','kube-system','default')['metadata']['uid']})
+        self.recover_creation(known)
 
     def destroy(self):
         receipt=self.state/'ownership.json';intent=self.state/'destroy-intent.json'
+        if not receipt.exists() and (self.state/'creation-intent.json').exists():
+            known=self.creation_intent()
+            if CLUSTER in self.run([self.tools['kind'],'get','clusters']).decode().splitlines():
+                self.recover_creation(known)
+            else:
+                self.clear_absent_creation()
+                print('Absent creation attempt cleared; no provider resource deleted.')
+                return
         if not receipt.exists() and not intent.exists():
             raise ValueError('No owned cluster or deletion receipt')
         known=json.loads((receipt if receipt.exists() else intent).read_text())
@@ -157,7 +220,7 @@ class Demo:
             raise ValueError('Deletion intent differs from ownership')
         owned = ['kubeconfig','kind.json','ca.key','ca.crt','ca.srl','tls.key','tls.crt','tls.csr',
             'extensions','demo-custody.json','configured.json','demo-token','values.json','console.key','console.crt',
-            'console.csr','console-extensions','console-image.tar','bootstrap-progress.json','ownership.json','destroy-intent.json']
+            'console.csr','console-extensions','console-image.tar','bootstrap-progress.json','creation-intent.json','ownership.json','destroy-intent.json']
         # Validate every local target before the first destructive action.
         for name in owned:
             path=self.state/name
@@ -248,8 +311,25 @@ class Demo:
             except subprocess.TimeoutExpired:
                 proc.kill(); proc.wait(timeout=5)
 
+    def health_ready(self, api, timeout=30):
+        deadline=time.monotonic()+timeout
+        while True:
+            remaining=deadline-time.monotonic()
+            if remaining<=0:raise ValueError('Vault listener readiness deadline exceeded')
+            try:
+                health=api.call('GET','sys/health',expected=(200,501,503),timeout=remaining)
+            except (ConnectionError,TimeoutError):
+                pass
+            except urllib.error.URLError as exc:
+                if not isinstance(exc.reason,(ConnectionError,TimeoutError)):raise
+            else:
+                if not isinstance(health,dict) or any(type(health.get(k)) is not bool for k in ('initialized','sealed')):
+                    raise ValueError('Invalid vault health observation')
+                return health
+            time.sleep(min(.2,max(0,deadline-time.monotonic())))
+
     def bootstrap(self, api):
-        health = api.call('GET','sys/health',expected=(200,501,503))
+        health = self.health_ready(api)
         custody = self.state/'demo-custody.json'
         if not health['initialized']:
             if custody.exists():

@@ -1,13 +1,13 @@
 """Fetch digest-pinned Linux amd64 clients without privileged package changes."""
 import hashlib
 import json
+import multiprocessing
 import os
 from pathlib import Path
 import platform
 import stat
 import tarfile
 import tempfile
-import time
 import urllib.request
 import urllib.parse
 
@@ -27,6 +27,42 @@ class DownloadRedirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req,fp,code,msg,headers,newurl)
 
 
+def bounded_process(target, args, timeout=120):
+    """A parent deadline also interrupts a child blocked inside a socket read."""
+    child=multiprocessing.get_context('spawn').Process(target=target,args=args)
+    child.start()
+    try:
+        child.join(timeout)
+        if child.is_alive():
+            raise ValueError('Client download deadline exceeded')
+        if child.exitcode!=0:
+            raise ValueError('Client download failed')
+    finally:
+        if child.is_alive():
+            child.terminate();child.join(2)
+        if child.is_alive():
+            child.kill();child.join(2)
+        if not child.is_alive():child.close()
+
+
+def download_child(entry, archive):
+    try:
+        if not trusted_url(entry['url']):raise ValueError('Untrusted client download URL')
+        opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),DownloadRedirect())
+        size=0
+        with opener.open(entry['url'],timeout=20) as response,Path(archive).open('xb') as stream:
+            length=response.headers.get('Content-Length')
+            if length is not None and (not length.isdigit() or int(length)>96*1024*1024):
+                raise ValueError('Client response exceeds download budget')
+            while chunk:=response.read(1024*1024):
+                size+=len(chunk)
+                if size>96*1024*1024:raise ValueError('Client download budget exceeded')
+                stream.write(chunk)
+    except Exception:
+        # The parent exposes only the fixed failure class, never response bodies.
+        raise SystemExit(1) from None
+
+
 def ensure(name):
     if platform.system()!='Linux' or platform.machine() not in ('x86_64','amd64'):
         raise ValueError('Automatic client bootstrap supports Linux amd64; provide SAFERUS_* tools on other platforms')
@@ -40,21 +76,11 @@ def ensure(name):
         if not stat.S_ISREG(target.stat().st_mode) or hashlib.sha256(target.read_bytes()).hexdigest()!=entry['binarySha256']:
             raise ValueError('Cached client digest mismatch')
         return str(target)
-    deadline=time.monotonic()+120
     with tempfile.TemporaryDirectory(dir=cache) as directory:
         archive=Path(directory)/'download'
-        size=0;digest=hashlib.sha256()
-        if not trusted_url(entry['url']):raise ValueError('Untrusted client download URL')
-        opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),DownloadRedirect())
-        with opener.open(entry['url'],timeout=20) as response,archive.open('wb') as stream:
-            length=response.headers.get('Content-Length')
-            if length is not None and (not length.isdigit() or int(length)>96*1024*1024):
-                raise ValueError('Client response exceeds download budget')
-            while chunk:=response.read(1024*1024):
-                size+=len(chunk)
-                if size>96*1024*1024 or time.monotonic()>deadline:raise ValueError('Client download budget exceeded')
-                digest.update(chunk);stream.write(chunk)
-        if digest.hexdigest()!=entry['sha256']:raise ValueError('Downloaded client digest mismatch')
+        bounded_process(download_child,(entry,str(archive)))
+        if archive.stat().st_size>96*1024*1024 or hashlib.sha256(archive.read_bytes()).hexdigest()!=entry['sha256']:
+            raise ValueError('Downloaded client digest mismatch')
         if 'member' in entry:
             with tarfile.open(archive) as tar:
                 member=tar.getmember(entry['member'])

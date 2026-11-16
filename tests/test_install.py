@@ -7,13 +7,46 @@ import stat
 import subprocess
 import tempfile
 import unittest
+import http.server
+import threading
+import time
+import urllib.request
 from unittest.mock import patch
 
 from tools.demo import Demo, ROOT, CHART_SHA, private_write
-from tools.bootstrap import trusted_url, DownloadRedirect
+from tools.bootstrap import trusted_url, DownloadRedirect, bounded_process
+
+
+def read_trickled_response(url, marker):
+    with urllib.request.urlopen(url,timeout=2) as response:
+        Path(marker).write_text('reading')
+        response.read(1024*1024)
+
+
+class Trickle(http.server.BaseHTTPRequestHandler):
+    def log_message(self,*args):pass
+    def do_GET(self):
+        self.send_response(200);self.send_header('Content-Length',str(1024*1024));self.end_headers()
+        try:
+            for _ in range(100):
+                self.wfile.write(b'x');self.wfile.flush();time.sleep(.1)
+        except (BrokenPipeError,ConnectionResetError):pass
 
 
 class LocalCustodyTests(unittest.TestCase):
+    def test_total_download_deadline_interrupts_a_trickling_http_read(self):
+        server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Trickle)
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                marker=Path(directory)/'started';started=time.monotonic()
+                with self.assertRaisesRegex(ValueError,'deadline'):
+                    bounded_process(read_trickled_response,('http://127.0.0.1:'+str(server.server_port),str(marker)),timeout=1)
+                self.assertLess(time.monotonic()-started,4)
+                self.assertEqual(marker.read_text(),'reading')
+        finally:
+            server.shutdown();server.server_close();thread.join(timeout=2)
+
     def test_private_atomic_state_and_symlink_rejection(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);path=root/'record'

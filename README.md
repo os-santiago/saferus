@@ -41,6 +41,13 @@ Reapply the same command to reconcile the demo, or validate the current install:
 ./saferus tools
 ```
 
+Creation records a private intent before invoking kind. After an interrupted
+creation, the next run recovers ownership only when the Kubernetes node carries
+the original nonce and the authenticated API supplies the cluster UID. If no
+cluster or partial provider container exists, the recorded attempt can restart
+or be cleared with `destroy`. Unidentified partial resources are retained for
+inspection; Saferus never adopts or deletes them solely by name.
+
 `tools` prints verified client paths. Use the printed kubectl path to access the
 console on loopback:
 
@@ -92,16 +99,20 @@ strings in audit output. A permitted → denied → permitted Pod sequence check
 actual network enforcement. Go tests cover the console's API boundary and token
 cleanup; installer tests cover interrupted setup and cleanup.
 
-Optional desktop/mobile browser verification:
+Optional desktop/mobile browser verification requires NSS `certutil`
+(`nss-tools` on Fedora or `libnss3-tools` on Debian/Ubuntu):
 
 ```bash
 python3 -m pip install -r requirements-browser.txt
-python3 -m playwright install chromium
+python3 -m playwright install firefox
 python3 -m tools.verify_browser --output /tmp/saferus-browser
+python3 -m tools.verify_browser_trust
 ```
 
-The browser test trusts only the known console certificate's public-key pin;
-API tests separately validate its issuing CA. See [validation](docs/validation.md)
+The browser test imports the public demo CA into a disposable Firefox/NSS
+profile and preserves normal X.509 verification. It does not alter host trust.
+The separate synthetic-certificate test checks valid TLS, wrong SAN and an
+untrusted CA. See [validation](docs/validation.md)
 for observed results and limitations.
 
 ## Remove the demo

@@ -11,13 +11,19 @@ Observed locally before the first PR:
 - TLS 1.2 and untrusted certificate rejection; TLS 1.3 with the local CA succeeds.
 - Real permitted → denied → permitted client Pods exercise NetworkPolicy.
 - Real console HTTPS request authenticates using its projected workload token.
-- Desktop and mobile Chromium browser walkthroughs complete the verification and
-  show no horizontal overflow. The browser trusts only the known certificate SPKI.
+- Desktop and mobile Firefox walkthroughs complete the verification and show no
+  horizontal overflow. A disposable NSS profile trusts the public demo CA with
+  normal X.509 validation. Synthetic browser fixtures accept valid TLS and reject
+  wrong SAN/untrusted CA certificates without modifying host trust.
 - Go 1.27.4 build, vet and race tests pass in the pinned builder image; CI also
   runs race tests independently.
 - Frontend tests and Helm rendering/security checks pass. Installer tests cover
   interrupted mount/seed creation, lost root-revocation responses and interrupted
   cluster/local-state deletion without replacing authority or overwriting data.
+- Creation failure tests cover a lost kind response, receipt persistence failure,
+  wrong nonce/provider and unidentified partial containers. A real failed create
+  was cleared after confirming no provider resources remained. A trickling HTTP
+  fixture proves that the parent deadline interrupts a blocked download read.
 
 Failure-derived corrections include strict CA key-usage extensions, declarative
 OpenBao audit configuration, waiting for Raft leadership/audit readiness, explicit
