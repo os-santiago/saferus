@@ -22,12 +22,21 @@ def trusted_context(playwright, ca, profile):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--state',type=Path,default=Path.home()/'.local/state/saferus/demo')
+    parser.add_argument('--state',type=Path)
+    parser.add_argument('--ai-sdlc-state',type=Path)
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--provider',default='podman',choices=['podman','docker'])
     args=parser.parse_args()
-    if not (args.state/'ownership.json').exists():raise ValueError('No installed demo')
-    d=Demo(args);d.cluster()
+    if args.state is None:
+        args.state=Path.home()/'.local/state/saferus'/('ai-sdlc-production' if args.ai_sdlc_state else 'demo')
+    if args.ai_sdlc_state:
+        from tools.test_environment import Environment
+        if not (args.state/'environment-ownership.json').exists():raise ValueError('No installed test environment')
+        d=Environment(args)
+    else:
+        if not (args.state/'ownership.json').exists():raise ValueError('No installed demo')
+        d=Demo(args)
+    d.cluster()
     args.output.mkdir(mode=0o700,parents=True,exist_ok=True)
     with d.api('deployment/saferus-console',8443) as api, sync_playwright() as playwright, tempfile.TemporaryDirectory(prefix="saferus-browser-") as profile:
         origin=api.origin.removesuffix('/v1/')

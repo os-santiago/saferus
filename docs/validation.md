@@ -39,3 +39,48 @@ backup restoration, external key custody, continuous isolation, an SLSA level or
 independent penetration testing. Subsequent entries must distinguish new evidence
 from these remaining gaps. Docker support uses the same installer path but has
 not yet been validated on this workstation; the observed provider is Podman.
+
+## AI-SDLC test environment bootstrap — 2026-11-16
+
+The new namespace was installed cold in the existing, installer-owned
+`ai-sdlc-saferus` kind cluster using Podman. The vault and console became ready,
+and all API, TLS, authentication, authorization, audit-redaction and network
+positive/negative/positive controls passed. Reapplying the same setup passed
+without replacing custody. Desktop and mobile Firefox walkthroughs passed with
+normal X.509 verification in isolated trust profiles.
+
+The 32 Python/Helm tests pass, including namespace lost-create-response recovery,
+foreign namespace/cluster/UID rejection, private kubeconfig handling and refusing
+to overwrite a promoted console image. Helm lint passes. The original standalone
+cluster remains separate; this command cannot delete the AI-SDLC cluster.
+
+This establishes baseline test infrastructure only. No autonomous issue, merge,
+promotion, release or deployment was produced by this bootstrap. The full E2E
+remains unverified until AI-SDLC performs those transitions itself.
+
+Auditor correction: once the test console exists, reapplication performs no
+Helm reconciliation or image build/import. A simulated promotion during initial
+build/import is rejected before Helm. The real read-only reapplication passed
+again after this correction; these checks prevent baseline setup from undoing
+an autonomous promotion.
+
+The cold console path now renders the Helm template and uses create-only
+Kubernetes API requests, creating NetworkPolicy before Service and Deployment.
+It never uses Helm upgrade for the test console. A real Kubernetes race fixture
+inserted a concurrent Deployment after the absent GET: the create failed with
+AlreadyExists and preserved its UID/image. The positive create/reapply control
+then passed with stable owned UIDs. The fixture scheduled no Pods and removed
+its namespace with a UID precondition. Run `python -m
+tools.verify_console_create_race --output /tmp/saferus-create-race.json` to repeat.
+
+The same create-only protocol also covers the console TLS Secret. A second real
+race inserts a concurrent Secret after GET and before create: its UID and bytes
+remain unchanged. No apply fallback is permitted for the test console Secret.
+The combined positive and conflict fixtures passed after this correction.
+
+Environment verification now selects the active immutable Deployment image,
+requires a fully observed single ready replica, and compares UID/generation/image
+before and after probes and API checks. Probes and the report use that same
+image, even when the saved baseline differs. The real active-image verification
+passed; a concurrent change fails verification instead of attributing evidence
+to the wrong image.
