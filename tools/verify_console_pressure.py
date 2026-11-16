@@ -10,7 +10,7 @@ import time
 import urllib.error
 import urllib.request
 
-from tools.demo import Demo
+from tools.demo import Demo, NoRedirect
 
 
 EXPECTED = {'verified': True, 'algorithm': 'AES-256-GCM', 'tokenTTLSeconds': 60,
@@ -37,7 +37,7 @@ def validate_response(status, raw):
 
 def request(origin, context, barrier=None):
     # One transport per worker; ambient proxies are excluded and X.509 stays on.
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect(),
                                         urllib.request.HTTPSHandler(context=context))
     req = urllib.request.Request(origin+'/api/demo', data=b'{}', method='POST',
                                  headers={'Content-Type': 'application/json', 'Origin': origin})

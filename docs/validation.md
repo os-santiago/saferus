@@ -97,13 +97,19 @@ only counters, durations and public workload identity.
 
 The real AI-SDLC test-production installation passed: 6 requests completed with
 verification and token revocation, 14 received the exact HTTP 429 saturation
-response, and both recovery checks passed. Successful durations were 23.95 ms
-minimum, 25.52 ms median and 27.74 ms maximum, including loopback port forwarding.
+response, and both recovery checks passed. Successful durations were 24.11 ms
+minimum, 25.93 ms median and 32.13 ms maximum, including loopback port forwarding.
 Deployment UID `99d5fda6-eb41-482a-bce1-cc5dc0ab3f4c`, generation 1, and image
 `localhost/saferus-console@sha256:15cf1ab23f143c3e46ad86dded0d8e459e91fa05817fef4012b3c0b8f0227933`
 remained stable before and after the check. A previous run also passed.
 
-All 33 Python/Helm tests and Helm lint passed. This is a bounded concurrency and
+All 35 Python/Helm tests and Helm lint passed. This is a bounded concurrency and
 recovery observation, not a throughput benchmark, percentile estimate, enterprise
 SLO, load-balancer test, or autonomous AI-SDLC E2E proof. The default application
 still intentionally admits one synthetic verification at a time.
+
+Auditor correction: the pressure client rejects redirects with the existing
+`NoRedirect` policy. A real local HTTP server returned 301/302/303/307/308 to a
+separate path; none of those destinations were contacted. A request timeout
+regression verifies no automatic retry. The corrected tool passed another real
+20-request run with stable workload identity and normal X.509 checks.
