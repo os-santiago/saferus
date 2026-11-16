@@ -1,0 +1,110 @@
+# Default: sealed TLS-only server. Initialization and key custody are external.
+network:
+  # Installer discovers the actual API endpoint; deny API egress until configured.
+  apiCIDRs: []
+  apiPort: 6443
+console:
+  enabled: false
+  image: ""
+openbao:
+  fullnameOverride: saferus
+  global:
+    tlsDisable: false
+  injector:
+    enabled: false
+  csi:
+    enabled: false
+  server:
+    enabled: true
+    image:
+      registry: docker.io
+      repository: openbao/openbao
+      tag: "2.7.2@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f"
+    logLevel: info
+    logFormat: json
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {cpu: "1", memory: 512Mi}
+    dev:
+      enabled: false
+    standalone:
+      enabled: false
+    ha:
+      enabled: true
+      # Local demo has one Raft member; this is not a high-availability claim.
+      replicas: 1
+      apiAddr: https://saferus:8200
+      raft:
+        enabled: true
+        setNodeId: true
+        config: |
+          ui = false
+          default_lease_ttl = "5m"
+          max_lease_ttl = "15m"
+          audit "file" "saferus" {
+            options {
+              file_path = "/openbao/audit/audit.json"
+              mode = "0600"
+              log_raw = "false"
+              hmac_accessor = "true"
+            }
+          }
+          listener "tcp" {
+            address = "[::]:8200"
+            cluster_address = "[::]:8201"
+            tls_cert_file = "/tls/tls.crt"
+            tls_key_file = "/tls/tls.key"
+            tls_min_version = "tls13"
+            http_read_header_timeout = "5s"
+            http_read_timeout = "15s"
+            http_write_timeout = "15s"
+            max_request_size = 1048576
+          }
+          storage "raft" {
+            path = "/openbao/data"
+          }
+    affinity: ""
+    disruptionBudget:
+      enabled: true
+      maxUnavailable: 0
+    dataStorage:
+      size: 1Gi
+    auditStorage:
+      enabled: true
+      size: 1Gi
+    persistentVolumeClaimRetentionPolicy:
+      whenDeleted: Retain
+      whenScaled: Retain
+    statefulSet:
+      securityContext:
+        pod:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          fsGroup: 1000
+          seccompProfile: {type: RuntimeDefault}
+        container:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: [ALL]}
+    extraEnvironmentVars:
+      BAO_CACERT: /tls/ca.crt
+    volumes:
+      - name: tls
+        secret:
+          secretName: saferus-tls
+          defaultMode: 0440
+      - name: tmp
+        emptyDir: {medium: Memory, sizeLimit: 32Mi}
+    volumeMounts:
+      - {name: tls, mountPath: /tls, readOnly: true}
+      - {name: tmp, mountPath: /tmp}
+    readinessProbe:
+      path: /v1/sys/health?standbyok=true
+    authDelegator:
+      enabled: false
+    serviceAccount:
+      serviceDiscovery:
+        enabled: false
+  ui:
+    enabled: false

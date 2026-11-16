@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Saferus · Workload vault</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+  <main>
+    <span class="eyebrow">SAFERUS / LOCAL DEMO</span>
+    <h1>Your workload.<br>Your secrets.</h1>
+    <p class="intro">Authenticate with Kubernetes identity. Verify encrypted access without installing an agent.</p>
+    <section aria-labelledby="verify-heading">
+      <h2 id="verify-heading">Verify workload access</h2>
+      <p>This check encrypts and decrypts a synthetic message, then revokes its short-lived access token. No secret values are displayed.</p>
+      <button id="verify" type="button">Run verification</button>
+      <p id="status" role="status" aria-live="polite">Ready to verify.</p>
+      <dl id="results" hidden>
+        <div><dt>Encryption</dt><dd id="algorithm"></dd></div>
+        <div><dt>Token lifetime</dt><dd id="ttl"></dd></div>
+        <div><dt>Access after verification</dt><dd>Token revoked</dd></div>
+      </dl>
+    </section>
+    <footer>Powered by OpenBao. Isolated demonstration · production assurance has not been established.</footer>
+  </main>
+</body>
+</html>

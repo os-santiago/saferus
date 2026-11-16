@@ -1,0 +1,10 @@
+apiVersion: v2
+name: saferus
+description: Agentless Kubernetes secrets vault powered by OpenBao
+version: 0.1.0
+appVersion: "2.7.2"
+type: application
+dependencies:
+  - name: openbao
+    version: 0.30.7
+    repository: https://openbao.github.io/openbao-helm

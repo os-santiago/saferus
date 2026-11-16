@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+*.key
+*.pem
+*.crt
+*.kubeconfig
+artifacts/
+.state/
+bin/
