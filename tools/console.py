@@ -99,6 +99,9 @@ def probe(d, image, allowed):
 
 
 def verify(d, image):
+    before = d.live_console() if hasattr(d, 'live_console') else None
+    if before is not None and before['image'] != image:
+        raise ValueError('Active console image changed before verification')
     probe(d,image,True)
     probe(d,image,False)
     probe(d,image,True)
@@ -112,8 +115,13 @@ def verify(d, image):
         with api.opener.open(origin+'/',timeout=5) as response:
             if b'Run verification' not in response.read(65537):
                 raise ValueError('Console page unavailable')
+    after = d.live_console() if before is not None else None
+    if before != after:
+        raise ValueError('Active console changed during verification')
     report=json.loads((d.state/'verification.json').read_text())
     report.update({'status':'passed','realWorkloadConsole':True,'projectedWorkloadIdentity':True,'positiveNegativePositiveNetworkProbe':True,
-        'consoleImage':image,'consoleRuntimeUID':d.get('deployment','saferus-console')['metadata']['uid']})
+        'consoleImage':image,'consoleRuntimeUID':after['uid'] if after else d.get('deployment','saferus-console')['metadata']['uid']})
+    if after is not None:
+        report['consoleGeneration']=after['generation']
     private_write(d.state/'verification.json',report)
     print(json.dumps({'console':'verified','networkPolicy':'positive-negative-positive passed','autonomousAISDLCE2E':False}))

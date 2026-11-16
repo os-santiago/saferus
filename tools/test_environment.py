@@ -93,6 +93,18 @@ class Environment(Demo):
     def destroy(self):
         raise ValueError('Test environment setup cannot delete the shared AI-SDLC cluster')
 
+    def live_console(self):
+        live=self.get('deployment','saferus-console')
+        meta=live.get('metadata',{});spec=live.get('spec',{});status=live.get('status',{})
+        containers=spec.get('template',{}).get('spec',{}).get('containers',[])
+        if (not meta.get('uid') or meta.get('deletionTimestamp') or not isinstance(meta.get('generation'),int)
+                or spec.get('replicas')!=1 or len(containers)!=1 or containers[0].get('name')!='console'
+                or not re.fullmatch(r'[a-zA-Z0-9./:_-]+@sha256:[a-f0-9]{64}',containers[0].get('image',''))
+                or status.get('observedGeneration')!=meta['generation']
+                or any(status.get(key)!=1 for key in ('replicas','updatedReplicas','readyReplicas','availableReplicas'))):
+            raise ValueError('Active console image is not a stable ready immutable deployment')
+        return {'uid':meta['uid'],'generation':meta['generation'],'image':containers[0]['image']}
+
     def existing_console(self):
         raw = self.kubectl('get', 'deployment', 'saferus-console', '-n', self.namespace, '--ignore-not-found', '-o', 'json')
         if not raw.strip():

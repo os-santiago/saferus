@@ -49,7 +49,7 @@ positive/negative/positive controls passed. Reapplying the same setup passed
 without replacing custody. Desktop and mobile Firefox walkthroughs passed with
 normal X.509 verification in isolated trust profiles.
 
-The 30 Python/Helm tests pass, including namespace lost-create-response recovery,
+The 32 Python/Helm tests pass, including namespace lost-create-response recovery,
 foreign namespace/cluster/UID rejection, private kubeconfig handling and refusing
 to overwrite a promoted console image. Helm lint passes. The original standalone
 cluster remains separate; this command cannot delete the AI-SDLC cluster.
@@ -77,3 +77,10 @@ The same create-only protocol also covers the console TLS Secret. A second real
 race inserts a concurrent Secret after GET and before create: its UID and bytes
 remain unchanged. No apply fallback is permitted for the test console Secret.
 The combined positive and conflict fixtures passed after this correction.
+
+Environment verification now selects the active immutable Deployment image,
+requires a fully observed single ready replica, and compares UID/generation/image
+before and after probes and API checks. Probes and the report use that same
+image, even when the saved baseline differs. The real active-image verification
+passed; a concurrent change fails verification instead of attributing evidence
+to the wrong image.

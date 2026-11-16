@@ -512,7 +512,12 @@ def main():
                 demo.bootstrap(api)
             demo.verify(api)
         from .console import install, verify
-        image = install(demo) if args.command in ('demo','test-environment') else json.loads((demo.state/'values.json').read_text())['console']['image']
+        if args.command in ('demo','test-environment'):
+            image = install(demo)
+        elif args.command == 'verify-environment':
+            image = demo.live_console()['image']
+        else:
+            image = json.loads((demo.state/'values.json').read_text())['console']['image']
         verify(demo, image)
         return 0
     except (ValueError,OSError,subprocess.SubprocessError,urllib.error.URLError) as exc:

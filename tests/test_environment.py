@@ -160,3 +160,24 @@ class TestEnvironmentCustody(unittest.TestCase):
             self.assertEqual(writes,['create'])
             self.assertEqual(foreign['data']['tls.key'],'concurrent-bytes')
             self.assertFalse((d.state/'console-resources.json').exists())
+
+    def test_live_verification_image_ignores_saved_baseline_and_requires_stability(self):
+        import copy
+        with tempfile.TemporaryDirectory() as directory:
+            d,_=self.fixture(directory)
+            private_write(d.state/'values.json',{'console':{'image':'localhost/baseline@sha256:'+'a'*64}})
+            live={'metadata':{'uid':'active-uid','generation':2},'spec':{'replicas':1,'template':{'spec':{'containers':[{'name':'console','image':'registry.invalid/promoted@sha256:'+'b'*64}]}}},'status':{'observedGeneration':2,'replicas':1,'updatedReplicas':1,'readyReplicas':1,'availableReplicas':1}}
+            d.get=lambda *args:live
+            self.assertEqual(d.live_console()['image'],'registry.invalid/promoted@sha256:'+'b'*64)
+            original=copy.deepcopy(live)
+            for key in ('observedGeneration','replicas','updatedReplicas','readyReplicas','availableReplicas'):
+                live=copy.deepcopy(original);live['status'][key]=0
+                with self.assertRaisesRegex(ValueError,'stable'):d.live_console()
+
+    def test_verification_refuses_image_changed_after_selection(self):
+        from tools import console
+        d=object.__new__(Environment)
+        with patch.object(d,'live_console',return_value={'uid':'x','generation':2,'image':'new'}),patch.object(console,'probe') as probe:
+            with self.assertRaisesRegex(ValueError,'changed before'):
+                console.verify(d,'old')
+            probe.assert_not_called()
