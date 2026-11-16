@@ -1,0 +1,91 @@
+{{- if .Values.console.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: saferus-console
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: saferus-console}
+  template:
+    metadata:
+      labels: {app: saferus-console, saferus.io/client: allowed}
+    spec:
+      serviceAccountName: saferus-client
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: console
+          image: {{ required "console.image must be a reviewed digest" .Values.console.image | quote }}
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 8443, name: https}]
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {cpu: 250m, memory: 64Mi}
+          env:
+            - {name: SAFERUS_VAULT_URL, value: "https://saferus:8200"}
+            - {name: SAFERUS_CA_FILE, value: /ca/ca.crt}
+            - {name: SAFERUS_JWT_FILE, value: /identity/token}
+            - {name: SAFERUS_TLS_CERT, value: /tls/tls.crt}
+            - {name: SAFERUS_TLS_KEY, value: /tls/tls.key}
+          volumeMounts:
+            - {name: tls, mountPath: /tls, readOnly: true}
+            - {name: ca, mountPath: /ca, readOnly: true}
+            - {name: identity, mountPath: /identity, readOnly: true}
+          readinessProbe:
+            httpGet: {path: /health/live, port: https, scheme: HTTPS}
+          livenessProbe:
+            httpGet: {path: /health/live, port: https, scheme: HTTPS}
+            initialDelaySeconds: 5
+      volumes:
+        - name: tls
+          secret: {secretName: saferus-console-tls, defaultMode: 0440}
+        - name: ca
+          configMap: {name: saferus-ca}
+        - name: identity
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken: {audience: saferus, expirationSeconds: 600, path: token}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: saferus-console
+spec:
+  selector: {app: saferus-console}
+  ports: [{name: https, port: 8443, targetPort: https}]
+  type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: saferus-console
+spec:
+  podSelector:
+    matchLabels: {app: saferus-console}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: openbao
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports: [{port: 8200, protocol: TCP}]
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+{{- end }}

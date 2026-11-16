@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "console": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "image": {"type": "string", "pattern": "^$|^[a-zA-Z0-9./:_-]+@sha256:[a-f0-9]{64}$"}
+      }
+    },
+    "openbao": {
+      "type": "object",
+      "properties": {
+        "global": {"properties": {"tlsDisable": {"const": false}}},
+        "injector": {"properties": {"enabled": {"const": false}}},
+        "csi": {"properties": {"enabled": {"const": false}}},
+        "server": {"properties": {"dev": {"properties": {"enabled": {"const": false}}}}}
+      }
+    }
+  }
+}

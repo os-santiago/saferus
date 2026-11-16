@@ -1,0 +1,7 @@
+*
+!Containerfile
+!go.mod
+!cmd/
+!cmd/**
+!web/
+!web/**
