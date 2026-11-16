@@ -56,10 +56,13 @@ def install(d):
     values = json.loads((d.state/'values.json').read_text())
     values['console']={'enabled':True,'image':image}
     private_write(d.state/'values.json',values)
-    if hasattr(d, 'before_console_create'):
-        d.before_console_create()
-    d.run([d.tools['helm'],'--kubeconfig',str(d.state/'kubeconfig'),'upgrade','saferus',str(ROOT/'charts/saferus'),
-        '-n',d.namespace,'-f',str(d.state/'values.json'),'--wait','--timeout','180s'],timeout=210)
+    if hasattr(d, 'create_console'):
+        rendered = d.run([d.tools['helm'], 'template', 'saferus', str(ROOT/'charts/saferus'),
+            '-n', d.namespace, '-f', str(d.state/'values.json'), '--show-only', 'templates/console.yaml'])
+        d.create_console(rendered)
+    else:
+        d.run([d.tools['helm'],'--kubeconfig',str(d.state/'kubeconfig'),'upgrade','saferus',str(ROOT/'charts/saferus'),
+            '-n',d.namespace,'-f',str(d.state/'values.json'),'--wait','--timeout','180s'],timeout=210)
     return image
 
 

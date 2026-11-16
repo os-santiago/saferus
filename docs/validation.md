@@ -49,7 +49,7 @@ positive/negative/positive controls passed. Reapplying the same setup passed
 without replacing custody. Desktop and mobile Firefox walkthroughs passed with
 normal X.509 verification in isolated trust profiles.
 
-The 28 Python/Helm tests pass, including namespace lost-create-response recovery,
+The 29 Python/Helm tests pass, including namespace lost-create-response recovery,
 foreign namespace/cluster/UID rejection, private kubeconfig handling and refusing
 to overwrite a promoted console image. Helm lint passes. The original standalone
 cluster remains separate; this command cannot delete the AI-SDLC cluster.
@@ -63,3 +63,12 @@ Helm reconciliation or image build/import. A simulated promotion during initial
 build/import is rejected before Helm. The real read-only reapplication passed
 again after this correction; these checks prevent baseline setup from undoing
 an autonomous promotion.
+
+The cold console path now renders the Helm template and uses create-only
+Kubernetes API requests, creating NetworkPolicy before Service and Deployment.
+It never uses Helm upgrade for the test console. A real Kubernetes race fixture
+inserted a concurrent Deployment after the absent GET: the create failed with
+AlreadyExists and preserved its UID/image. The positive create/reapply control
+then passed with stable owned UIDs. The fixture scheduled no Pods and removed
+its namespace with a UID precondition. Run `python -m
+tools.verify_console_create_race --output /tmp/saferus-create-race.json` to repeat.

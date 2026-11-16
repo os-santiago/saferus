@@ -114,3 +114,31 @@ class TestEnvironmentCustody(unittest.TestCase):
             self.assertTrue(any(c[1]=='build' for c in commands))
             self.assertTrue(any('import' in c for c in commands))
             self.assertFalse(any('upgrade' in c for c in commands))
+
+    def test_create_race_cannot_update_concurrent_deployment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            d,_=self.fixture(directory);d.cluster=lambda:None
+            private_write(d.state/'environment-intent.json',{'nonce':'a'*48})
+            current={};writes=[]
+            kinds={'policy':'NetworkPolicy','service':'Service','deployment':'Deployment'}
+            def kubectl(*args,data=None,**kwargs):
+                if args[:2]==('create','--dry-run=client'):
+                    return json.dumps({'apiVersion':'fixture/v1','kind':kinds[data.decode().strip()], 'metadata':{'name':'saferus-console'}}).encode()
+                if args[0]=='get':
+                    kind=args[1]
+                    if kind=='Deployment':
+                        current[kind]={'metadata':{'uid':'concurrent-owner'},'image':'promoted'}
+                        return b''  # Original GET observed absence; object appears afterward.
+                    return b''
+                if args[0]=='create':
+                    value=json.loads(data);kind=value['kind'];writes.append(kind)
+                    if kind in current:raise ValueError('AlreadyExists')
+                    value['metadata']['uid']='owned-'+kind;current[kind]=value
+                    return json.dumps(value).encode()
+                raise AssertionError('Unexpected reconciliation operation')
+            d.kubectl=kubectl
+            with self.assertRaisesRegex(ValueError,'AlreadyExists'):
+                d.create_console(b'policy\n---\nservice\n---\ndeployment')
+            self.assertEqual(writes,['NetworkPolicy','Service','Deployment'])
+            self.assertEqual(current['Deployment'],{'metadata':{'uid':'concurrent-owner'},'image':'promoted'})
+            self.assertEqual(set(json.loads((d.state/'console-resources.json').read_text())),{'NetworkPolicy','Service'})

@@ -280,7 +280,7 @@ class Demo:
         values = {'network':{'apiCIDRs':cidrs,'apiPort':ports.pop()}}
         if (self.state/'values.json').exists():
             previous = json.loads((self.state/'values.json').read_text())
-            if 'console' in previous:
+            if 'console' in previous and not getattr(self, 'console_create_only', False):
                 values['console'] = previous['console']
         private_write(self.state/'values.json', values)
         self.run([self.tools['helm'],'--kubeconfig',str(self.state/'kubeconfig'),'upgrade','--install','saferus',str(ROOT/'charts/saferus'),'-n',self.namespace,

@@ -5,6 +5,7 @@ invokes AI-SDLC stages, deletes a cluster, or changes an application image after
 an autonomous deployment.
 """
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -16,6 +17,7 @@ from .demo import Demo, private_write
 
 class Environment(Demo):
     namespace = 'ai-sdlc-production'
+    console_create_only = True
     cluster_name = 'ai-sdlc-saferus'
 
     def __init__(self, args):
@@ -117,3 +119,43 @@ class Environment(Demo):
         # Deployment UID; absence is not authority to create one.
         if self.existing_console() is not None:
             raise ValueError('Console appeared during baseline build; refusing reconciliation')
+
+    def create_console(self, rendered):
+        """Create-only API writes close the GET/Helm update race atomically."""
+        self.cluster()
+        intent=json.loads(self.private_input(self.state/'environment-intent.json'))
+        objects={}
+        for document in re.split(r'^---\s*$', rendered.decode(), flags=re.MULTILINE):
+            if not document.strip():continue
+            value=json.loads(self.kubectl('create','--dry-run=client','-n',self.namespace,'-f','-','-o','json',data=document.encode()))
+            kind=value.get('kind')
+            if kind not in ('Deployment','Service','NetworkPolicy') or kind in objects or value.get('metadata',{}).get('name')!='saferus-console':
+                raise ValueError('Unexpected console manifest')
+            objects[kind]=value
+        if set(objects)!= {'Deployment','Service','NetworkPolicy'}:
+            raise ValueError('Incomplete console manifests')
+        path=self.state/'console-resources.json'
+        owners=json.loads(self.private_input(path)) if path.exists() else {}
+        # Isolation exists before any console Pod can be scheduled.
+        for kind in ('NetworkPolicy','Service','Deployment'):
+            value=objects[kind]
+            digest=hashlib.sha256(json.dumps(value,sort_keys=True).encode()).hexdigest()
+            value['metadata'].setdefault('annotations',{}).update({
+                'saferus.io/creation-nonce':intent['nonce'],'saferus.io/baseline-manifest':digest})
+            raw=self.kubectl('get',kind,'saferus-console','-n',self.namespace,'--ignore-not-found','-o','json')
+            if raw.strip():
+                current=json.loads(raw)
+            else:
+                if kind in owners:raise ValueError('Owned console resource disappeared')
+                # If a resource appears after GET, create returns AlreadyExists.
+                # No apply/patch/Helm fallback may overwrite the concurrent object.
+                current=json.loads(self.kubectl('create','-n',self.namespace,'-f','-','-o','json',data=json.dumps(value).encode()))
+            meta=current.get('metadata',{})
+            annotations=meta.get('annotations',{})
+            if (not meta.get('uid') or meta.get('deletionTimestamp')
+                    or annotations.get('saferus.io/creation-nonce')!=intent['nonce']
+                    or annotations.get('saferus.io/baseline-manifest')!=digest
+                    or (kind in owners and owners[kind]!=meta['uid'])):
+                raise ValueError('Console resource ownership changed')
+            owners[kind]=meta['uid'];private_write(path,owners)
+        self.kubectl('rollout','status','deployment/saferus-console','-n',self.namespace,'--timeout=180s',timeout=200)
