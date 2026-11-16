@@ -8,7 +8,7 @@ import secrets
 import tempfile
 import urllib.request
 
-from .demo import ROOT, NAMESPACE, CLUSTER, private_write
+from .demo import ROOT, private_write
 
 
 def install(d):
@@ -19,7 +19,7 @@ def install(d):
     tag = 'localhost/saferus-console:'+source.hexdigest()[:20]
     provider = d.env['KIND_EXPERIMENTAL_PROVIDER']
     d.run([provider,'build','-t',tag,'-f',str(ROOT/'Containerfile'),str(ROOT)],timeout=300)
-    node = CLUSTER+'-control-plane'
+    node = d.cluster_name+'-control-plane'
     with tempfile.TemporaryDirectory(prefix='image-',dir=d.state) as directory:
         archive = Path(directory)/'console.tar'
         d.run([provider,'save','-o',str(archive),tag],timeout=120)
@@ -44,14 +44,14 @@ def install(d):
         d.run([openssl,'x509','-req','-in',str(d.state/'console.csr'),'-CA',str(d.state/'ca.crt'),'-CAkey',str(d.state/'ca.key'),
             '-CAcreateserial','-days','2','-extfile',str(d.state/'console-extensions'),'-out',str(d.state/'console.crt')])
     d.run([d.tools['openssl'],'verify','-x509_strict','-CAfile',str(d.state/'ca.crt'),str(d.state/'console.crt')])
-    d.apply({'apiVersion':'v1','kind':'Secret','metadata':{'name':'saferus-console-tls','namespace':NAMESPACE},
+    d.apply({'apiVersion':'v1','kind':'Secret','metadata':{'name':'saferus-console-tls','namespace':d.namespace},
         'type':'kubernetes.io/tls','data':{'tls.crt':base64.b64encode((d.state/'console.crt').read_bytes()).decode(),
                                        'tls.key':base64.b64encode((d.state/'console.key').read_bytes()).decode()}})
     values = json.loads((d.state/'values.json').read_text())
     values['console']={'enabled':True,'image':image}
     private_write(d.state/'values.json',values)
     d.run([d.tools['helm'],'--kubeconfig',str(d.state/'kubeconfig'),'upgrade','saferus',str(ROOT/'charts/saferus'),
-        '-n',NAMESPACE,'-f',str(d.state/'values.json'),'--wait','--timeout','180s'],timeout=210)
+        '-n',d.namespace,'-f',str(d.state/'values.json'),'--wait','--timeout','180s'],timeout=210)
     return image
 
 
@@ -60,7 +60,7 @@ def probe(d, image, allowed):
     labels = {'saferus.io/probe':'true'}
     if allowed:
         labels['saferus.io/client']='allowed'
-    manifest={'apiVersion':'v1','kind':'Pod','metadata':{'name':name,'namespace':NAMESPACE,'labels':labels},'spec':{
+    manifest={'apiVersion':'v1','kind':'Pod','metadata':{'name':name,'namespace':d.namespace,'labels':labels},'spec':{
         'automountServiceAccountToken':False,'restartPolicy':'Never','activeDeadlineSeconds':45,
         'securityContext':{'runAsNonRoot':True,'runAsUser':1000,'runAsGroup':1000,'seccompProfile':{'type':'RuntimeDefault'}},
         'containers':[{'name':'probe','image':image,'args':['--probe' if allowed else '--probe-denied'],
@@ -71,7 +71,7 @@ def probe(d, image, allowed):
         'volumes':[{'name':'ca','configMap':{'name':'saferus-ca'}}]}}
     created=json.loads(d.kubectl('create','-f','-','-o','json',data=json.dumps(manifest).encode()))
     try:
-        d.kubectl('wait','pod/'+name,'-n',NAMESPACE,'--for=jsonpath={.status.phase}=Succeeded','--timeout=50s',timeout=55)
+        d.kubectl('wait','pod/'+name,'-n',d.namespace,'--for=jsonpath={.status.phase}=Succeeded','--timeout=50s',timeout=55)
     finally:
         # The unique name was created by this invocation. Verify identity before
         # asking Kubernetes to delete only the acknowledged Pod UID.
@@ -80,7 +80,7 @@ def probe(d, image, allowed):
             raise ValueError('Probe identity changed; cleanup refused')
         # kubectl raw DELETE supports the API's atomic UID precondition.
         options={'apiVersion':'v1','kind':'DeleteOptions','preconditions':{'uid':created['metadata']['uid']},'gracePeriodSeconds':0}
-        d.kubectl('delete','--raw','/api/v1/namespaces/'+NAMESPACE+'/pods/'+name,'-f','-',data=json.dumps(options).encode())
+        d.kubectl('delete','--raw','/api/v1/namespaces/'+d.namespace+'/pods/'+name,'-f','-',data=json.dumps(options).encode())
 
 
 def verify(d, image):

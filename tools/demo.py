@@ -81,6 +81,8 @@ class API:
 
 
 class Demo:
+    namespace = NAMESPACE
+    cluster_name = CLUSTER
     def __init__(self, args):
         self.state = args.state.absolute()
         self.state.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -119,7 +121,8 @@ class Demo:
     def kubectl(self, *args, data=None, timeout=120):
         return self.run(self.k + list(args), data, timeout)
 
-    def get(self, resource, name, namespace=NAMESPACE):
+    def get(self, resource, name, namespace=None):
+        namespace = namespace or self.namespace
         return json.loads(self.kubectl('get', resource, name, '-n', namespace, '-o', 'json'))
 
     def apply(self, value):
@@ -135,7 +138,7 @@ class Demo:
         if path.is_symlink():raise ValueError('Creation intent cannot be a symlink')
         known=json.loads(path.read_text())
         if (set(known)!={'version','cluster','provider','nonce','configSHA256'} or known['version']!=1
-                or known['cluster']!=CLUSTER or known['provider']!=self.env['KIND_EXPERIMENTAL_PROVIDER']
+                or known['cluster']!=self.cluster_name or known['provider']!=self.env['KIND_EXPERIMENTAL_PROVIDER']
                 or not isinstance(known['nonce'],str) or not re.fullmatch('[a-f0-9]{48}',known['nonce'])):
             raise ValueError('Creation intent differs from this demo')
         config=self.creation_config(known['nonce'])
@@ -150,18 +153,18 @@ class Demo:
         # Node labels are observed through the authenticated Kubernetes API.
         # Container names and kind's inventory are not ownership evidence.
         nodes=json.loads(self.kubectl('get','nodes','-o','json'))['items']
-        if (len(nodes)!=1 or nodes[0]['metadata']['name']!=CLUSTER+'-control-plane'
+        if (len(nodes)!=1 or nodes[0]['metadata']['name']!=self.cluster_name+'-control-plane'
                 or nodes[0]['metadata'].get('labels',{}).get('saferus.io/creation')!=known['nonce']):
             raise ValueError('Incomplete cluster lacks the original creation identity; inspection required')
         uid=self.get('namespace','kube-system','default')['metadata']['uid']
         if not isinstance(uid,str) or not uid:raise ValueError('Cluster UID unavailable')
         os.chmod(self.state/'kubeconfig',0o600)
-        private_write(self.state/'ownership.json',{'cluster':CLUSTER,'provider':known['provider'],'clusterUID':uid})
+        private_write(self.state/'ownership.json',{'cluster':self.cluster_name,'provider':known['provider'],'clusterUID':uid})
 
     def clear_absent_creation(self):
         self.creation_intent()
         provider=self.env['KIND_EXPERIMENTAL_PROVIDER']
-        for selector in ('label=io.x-k8s.kind.cluster='+CLUSTER,'name='+CLUSTER+'-control-plane'):
+        for selector in ('label=io.x-k8s.kind.cluster='+self.cluster_name,'name='+self.cluster_name+'-control-plane'):
             if self.run([provider,'ps','--all','--filter',selector,'--format','{{.ID}}']).strip():
                 raise ValueError('Partial provider resources remain; inspection required, no name-only adoption')
         paths=[self.state/name for name in ('kubeconfig','kind.json','creation-intent.json')]
@@ -176,27 +179,27 @@ class Demo:
         existing = self.run([self.tools['kind'], 'get', 'clusters']).decode().splitlines()
         if receipt.exists():
             known = json.loads(receipt.read_text())
-            if known.get('provider')!=self.env['KIND_EXPERIMENTAL_PROVIDER'] or CLUSTER not in existing or known.get('clusterUID') != self.get('namespace', 'kube-system', 'default')['metadata']['uid']:
+            if known.get('provider')!=self.env['KIND_EXPERIMENTAL_PROVIDER'] or self.cluster_name not in existing or known.get('clusterUID') != self.get('namespace', 'kube-system', 'default')['metadata']['uid']:
                 raise ValueError('Owned cluster identity changed')
             return
         intent=self.state/'creation-intent.json'
         if intent.exists() or intent.is_symlink():
             known=self.creation_intent()
-            if CLUSTER in existing:
+            if self.cluster_name in existing:
                 self.recover_creation(known)
                 return
             self.clear_absent_creation()
-        elif CLUSTER in existing:
+        elif self.cluster_name in existing:
             raise ValueError('Refusing to adopt an unowned cluster')
         for name in ('kubeconfig', 'kind.json'):
             if (self.state / name).exists() or (self.state / name).is_symlink():
                 raise ValueError('Incomplete installation requires inspection')
         nonce=secrets.token_hex(24);config=self.creation_config(nonce)
-        known={'version':1,'cluster':CLUSTER,'provider':self.env['KIND_EXPERIMENTAL_PROVIDER'],
+        known={'version':1,'cluster':self.cluster_name,'provider':self.env['KIND_EXPERIMENTAL_PROVIDER'],
             'nonce':nonce,'configSHA256':hashlib.sha256(json.dumps(config,sort_keys=True).encode()).hexdigest()}
         private_write(intent,known)
         private_write(self.state / 'kind.json',config)
-        self.run([self.tools['kind'], 'create', 'cluster', '--name', CLUSTER, '--config', str(self.state / 'kind.json'),
+        self.run([self.tools['kind'], 'create', 'cluster', '--name', self.cluster_name, '--config', str(self.state / 'kind.json'),
             '--kubeconfig', str(self.state / 'kubeconfig'), '--wait', '180s'], timeout=240)
         self.recover_creation(known)
 
@@ -204,7 +207,7 @@ class Demo:
         receipt=self.state/'ownership.json';intent=self.state/'destroy-intent.json'
         if not receipt.exists() and (self.state/'creation-intent.json').exists():
             known=self.creation_intent()
-            if CLUSTER in self.run([self.tools['kind'],'get','clusters']).decode().splitlines():
+            if self.cluster_name in self.run([self.tools['kind'],'get','clusters']).decode().splitlines():
                 self.recover_creation(known)
             else:
                 self.clear_absent_creation()
@@ -214,7 +217,7 @@ class Demo:
             raise ValueError('No owned cluster or deletion receipt')
         known=json.loads((receipt if receipt.exists() else intent).read_text())
         provider=self.env['KIND_EXPERIMENTAL_PROVIDER']
-        if known.get('cluster')!=CLUSTER or known.get('provider')!=provider or not known.get('clusterUID'):
+        if known.get('cluster')!=self.cluster_name or known.get('provider')!=provider or not known.get('clusterUID'):
             raise ValueError('Deletion ownership differs')
         if intent.exists() and json.loads(intent.read_text())!=known:
             raise ValueError('Deletion intent differs from ownership')
@@ -227,13 +230,13 @@ class Demo:
             if path.is_symlink():raise ValueError('Refusing symlink in demo cleanup')
             if path.exists() and (not path.is_file() or path.stat().st_uid!=os.getuid()):raise ValueError('Unowned demo file')
         existing=self.run([self.tools['kind'],'get','clusters']).decode().splitlines()
-        if CLUSTER in existing:
+        if self.cluster_name in existing:
             self.cluster()  # Must still be the original live UID and provider.
             private_write(intent,known)
-            self.run([self.tools['kind'],'delete','cluster','--name',CLUSTER],timeout=120)
+            self.run([self.tools['kind'],'delete','cluster','--name',self.cluster_name],timeout=120)
         elif not intent.exists():
             raise ValueError('Cluster disappeared without a recorded deletion intent')
-        if CLUSTER in self.run([self.tools['kind'],'get','clusters']).decode().splitlines():
+        if self.cluster_name in self.run([self.tools['kind'],'get','clusters']).decode().splitlines():
             raise ValueError('Cluster deletion was not confirmed')
         for name in owned:
             path=self.state/name
@@ -254,7 +257,7 @@ class Demo:
             '-addext','keyUsage=critical,keyCertSign,cRLSign','-keyout',str(self.state/'ca.key'),'-out',str(self.state/'ca.crt')])
         self.run([openssl,'req','-new','-newkey','ec','-pkeyopt','ec_paramgen_curve:P-256','-nodes',
             '-subj','/CN=saferus','-keyout',str(self.state/'tls.key'),'-out',str(self.state/'tls.csr')])
-        private_write(self.state/'extensions', b'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:saferus,DNS:saferus.saferus-demo.svc,DNS:saferus.saferus-demo.svc.cluster.local,DNS:localhost,IP:127.0.0.1\n')
+        private_write(self.state/'extensions', ('basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:saferus,DNS:saferus.{self.namespace}.svc,DNS:saferus.{self.namespace}.svc.cluster.local,DNS:localhost,IP:127.0.0.1\n'.format(self=self)).encode())
         self.run([openssl,'x509','-req','-in',str(self.state/'tls.csr'),'-CA',str(self.state/'ca.crt'),
             '-CAkey',str(self.state/'ca.key'),'-CAcreateserial','-days','2','-extfile',str(self.state/'extensions'),'-out',str(self.state/'tls.crt')])
 
@@ -262,13 +265,13 @@ class Demo:
         archive = ROOT/'charts/saferus/charts/openbao-0.30.7.tgz'
         if hashlib.sha256(archive.read_bytes()).hexdigest() != CHART_SHA:
             raise ValueError('Vendored chart digest differs')
-        self.apply({'apiVersion':'v1','kind':'Namespace','metadata':{'name':NAMESPACE,'labels':{
+        self.apply({'apiVersion':'v1','kind':'Namespace','metadata':{'name':self.namespace,'labels':{
             'pod-security.kubernetes.io/enforce':'restricted','saferus.io/scope':'local-demo'}}})
         self.tls()
         data = {name:base64.b64encode((self.state/name).read_bytes()).decode() for name in ('tls.crt','tls.key','ca.crt')}
         # Secret bytes stay on stdin, never command arguments or public Helm values.
-        self.apply({'apiVersion':'v1','kind':'Secret','metadata':{'name':'saferus-tls','namespace':NAMESPACE},'type':'Opaque','data':data})
-        self.apply({'apiVersion':'v1','kind':'ConfigMap','metadata':{'name':'saferus-ca','namespace':NAMESPACE},'data':{'ca.crt':(self.state/'ca.crt').read_text()}})
+        self.apply({'apiVersion':'v1','kind':'Secret','metadata':{'name':'saferus-tls','namespace':self.namespace},'type':'Opaque','data':data})
+        self.apply({'apiVersion':'v1','kind':'ConfigMap','metadata':{'name':'saferus-ca','namespace':self.namespace},'data':{'ca.crt':(self.state/'ca.crt').read_text()}})
         endpoints = self.get('endpoints','kubernetes','default')['subsets']
         cidrs = sorted({str(ipaddress.ip_address(a['ip'])) + '/32' for s in endpoints for a in s['addresses']})
         ports = {p['port'] for s in endpoints for p in s['ports']}
@@ -280,16 +283,16 @@ class Demo:
             if 'console' in previous:
                 values['console'] = previous['console']
         private_write(self.state/'values.json', values)
-        self.run([self.tools['helm'],'--kubeconfig',str(self.state/'kubeconfig'),'upgrade','--install','saferus',str(ROOT/'charts/saferus'),'-n',NAMESPACE,
+        self.run([self.tools['helm'],'--kubeconfig',str(self.state/'kubeconfig'),'upgrade','--install','saferus',str(ROOT/'charts/saferus'),'-n',self.namespace,
             '-f',str(self.state/'values.json'),'--timeout','180s'],timeout=210)
-        self.kubectl('wait','pod/saferus-0','-n',NAMESPACE,'--for=jsonpath={.status.phase}=Running','--timeout=180s',timeout=200)
+        self.kubectl('wait','pod/saferus-0','-n',self.namespace,'--for=jsonpath={.status.phase}=Running','--timeout=180s',timeout=200)
 
     @contextlib.contextmanager
     def api(self, target='pod/saferus-0', remote_port=8200):
         with socket.socket() as sock:
             sock.bind(('127.0.0.1',0))
             port = sock.getsockname()[1]
-        proc = subprocess.Popen(self.k + ['port-forward','-n',NAMESPACE,target,str(port)+':'+str(remote_port),'--address','127.0.0.1'],
+        proc = subprocess.Popen(self.k + ['port-forward','-n',self.namespace,target,str(port)+':'+str(remote_port),'--address','127.0.0.1'],
             stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         try:
             deadline = time.monotonic()+15
@@ -392,7 +395,7 @@ class Demo:
             api.call('POST','auth/kubernetes/config',{'kubernetes_host':'https://kubernetes.default.svc:443'},root)
             api.call('PUT','sys/policies/acl/saferus-demo-reader',{'policy':policy},root)
             api.call('POST','auth/kubernetes/role/demo',{'bound_service_account_names':['saferus-client'],
-                'bound_service_account_namespaces':[NAMESPACE],'audience':'saferus','token_policies':['saferus-demo-reader'],
+                'bound_service_account_namespaces':[self.namespace],'audience':'saferus','token_policies':['saferus-demo-reader'],
                 'token_ttl':60,'token_max_ttl':300,'token_explicit_max_ttl':300,'token_no_default_policy':True},root)
             progress={'phase':'configured','configuration':fingerprint}
             private_write(progress_path,progress)
@@ -430,7 +433,7 @@ class Demo:
         except ssl.SSLCertVerificationError:
             pass
         api.call('GET','secret/data/demo/service',expected=(403,))
-        jwt = self.kubectl('create','token','saferus-client','-n',NAMESPACE,'--audience','saferus','--duration','10m').decode().strip()
+        jwt = self.kubectl('create','token','saferus-client','-n',self.namespace,'--audience','saferus','--duration','10m').decode().strip()
         login = api.call('POST','auth/kubernetes/login',{'role':'demo','jwt':jwt})['auth']
         token = login['client_token']
         if not 0 < login['lease_duration'] <= 60 or login['policies'] != ['saferus-demo-reader']:
@@ -441,9 +444,9 @@ class Demo:
         api.call('GET','secret/data/other/service',token=token,expected=(403,))
         api.call('POST','secret/data/demo/service',{'data':{'password':'forbidden'},'options':{'cas':1}},token,expected=(403,))
         api.call('GET','transit/export/encryption-key/demo',token=token,expected=(403,))
-        wrong = self.kubectl('create','token','saferus-client','-n',NAMESPACE,'--audience','wrong','--duration','10m').decode().strip()
+        wrong = self.kubectl('create','token','saferus-client','-n',self.namespace,'--audience','wrong','--duration','10m').decode().strip()
         api.call('POST','auth/kubernetes/login',{'role':'demo','jwt':wrong},expected=(403,))
-        wrong = self.kubectl('create','token','default','-n',NAMESPACE,'--audience','saferus','--duration','10m').decode().strip()
+        wrong = self.kubectl('create','token','default','-n',self.namespace,'--audience','saferus','--duration','10m').decode().strip()
         api.call('POST','auth/kubernetes/login',{'role':'demo','jwt':wrong},expected=(403,))
         plaintext = base64.b64encode(b'Saferus synthetic demonstration').decode()
         encrypted = api.call('POST','transit/encrypt/demo',{'plaintext':plaintext},token)['data']['ciphertext']
@@ -455,7 +458,7 @@ class Demo:
         api.call('POST','transit/decrypt/demo',{'ciphertext':version+':'+base64.b64encode(altered).decode()},token,expected=(400,))
         api.call('POST','auth/token/revoke-self',{},token)
         api.call('GET','secret/data/demo/service',token=token,expected=(403,))
-        audit = self.kubectl('exec','-n',NAMESPACE,'saferus-0','--','tail','-c','1048576','/openbao/audit/audit.json')
+        audit = self.kubectl('exec','-n',self.namespace,'saferus-0','--','tail','-c','1048576','/openbao/audit/audit.json')
         if not audit or secret.encode() in audit or token.encode() in audit or jwt.encode() in audit:
             raise ValueError('Audit absent or contains raw secret material')
         pod = self.get('pod','saferus-0')
@@ -475,11 +478,15 @@ class Demo:
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command',choices=['demo','verify','destroy','tools'])
+    parser.add_argument('command',choices=['demo','verify','destroy','tools','test-environment','verify-environment'])
     parser.add_argument('--confirm-local-demo',action='store_true',help='Confirm deletion of the owned synthetic demo cluster and local custody')
     parser.add_argument('--provider',choices=['podman','docker'],default='podman')
-    parser.add_argument('--state',type=Path,default=Path.home()/'.local/state/saferus/demo')
+    parser.add_argument('--state',type=Path)
+    parser.add_argument('--ai-sdlc-state',type=Path,default=Path.home()/'.local/state/ai-sdlc/ai-sdlc-saferus')
     args = parser.parse_args()
+    external = args.command in ('test-environment','verify-environment')
+    if args.state is None:
+        args.state = Path.home()/'.local/state/saferus'/('ai-sdlc-production' if external else 'demo')
     try:
         if args.command=='tools':
             from .bootstrap import ensure
@@ -487,21 +494,25 @@ def main():
             return 0
         if args.command=='destroy' and not args.confirm_local_demo:
             raise ValueError('Use --confirm-local-demo to destroy the owned synthetic demo')
-        demo = Demo(args)
+        if external:
+            from .test_environment import Environment
+            demo = Environment(args)
+        else:
+            demo = Demo(args)
         if args.command=='destroy':
             demo.destroy()
             return 0
         if args.command=='verify' and not (demo.state/'ownership.json').exists():
             raise ValueError('No owned installation to verify')
         demo.cluster()
-        if args.command=='demo':
+        if args.command in ('demo','test-environment'):
             demo.install()
         with demo.api() as api:
-            if args.command=='demo':
+            if args.command in ('demo','test-environment'):
                 demo.bootstrap(api)
             demo.verify(api)
         from .console import install, verify
-        image = install(demo) if args.command=='demo' else json.loads((demo.state/'values.json').read_text())['console']['image']
+        image = install(demo) if args.command in ('demo','test-environment') else json.loads((demo.state/'values.json').read_text())['console']['image']
         verify(demo, image)
         return 0
     except (ValueError,OSError,subprocess.SubprocessError,urllib.error.URLError) as exc:

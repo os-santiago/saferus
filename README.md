@@ -66,6 +66,39 @@ The console accepts no secret or plaintext input. **Run verification** uses a
 projected Kubernetes identity, encrypts and decrypts a fixed synthetic message,
 then revokes the short-lived token. It displays only the verification result.
 
+## AI-SDLC test production
+
+To provision the baseline vault in the dedicated AI-SDLC kind installation:
+
+```bash
+./saferus test-environment --provider podman
+./saferus verify-environment --provider podman
+```
+
+This uses the existing installer-owned `ai-sdlc-saferus` cluster and creates the
+`ai-sdlc-production` namespace. AI-SDLC must already have a valid installation
+record at `~/.local/state/ai-sdlc/ai-sdlc-saferus`; use `--ai-sdlc-state PATH` for
+an alternate location. Application custody is separate, under
+`~/.local/state/saferus/ai-sdlc-production`, or an explicit `--state PATH`.
+
+Setup verifies the live cluster UID, records its namespace creation intent and
+rejects foreign namespaces or changed UIDs. It cannot destroy the AI-SDLC
+cluster. Reapplying baseline setup refuses to replace an image changed by a
+later promotion. This is initial infrastructure setup, not an AI-SDLC workflow
+stage: autonomous requests still enter only through issues.
+
+To verify the browser against this environment with normal certificate checks:
+
+```bash
+python -m tools.verify_browser \
+  --ai-sdlc-state ~/.local/state/ai-sdlc/ai-sdlc-saferus \
+  --output /tmp/saferus-test-browser
+```
+
+The browser procedure requires Playwright Firefox and NSS `certutil`. It trusts
+only the local demo CA in a disposable profile. All synthetic custody and
+single-node limitations of the standalone demo still apply.
+
 ## What is installed
 
 | Component | Purpose | Boundary |

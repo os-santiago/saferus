@@ -39,3 +39,21 @@ backup restoration, external key custody, continuous isolation, an SLSA level or
 independent penetration testing. Subsequent entries must distinguish new evidence
 from these remaining gaps. Docker support uses the same installer path but has
 not yet been validated on this workstation; the observed provider is Podman.
+
+## AI-SDLC test environment bootstrap — 2026-11-16
+
+The new namespace was installed cold in the existing, installer-owned
+`ai-sdlc-saferus` kind cluster using Podman. The vault and console became ready,
+and all API, TLS, authentication, authorization, audit-redaction and network
+positive/negative/positive controls passed. Reapplying the same setup passed
+without replacing custody. Desktop and mobile Firefox walkthroughs passed with
+normal X.509 verification in isolated trust profiles.
+
+The 25 Python/Helm tests pass, including namespace lost-create-response recovery,
+foreign namespace/cluster/UID rejection, private kubeconfig handling and refusing
+to overwrite a promoted console image. Helm lint passes. The original standalone
+cluster remains separate; this command cannot delete the AI-SDLC cluster.
+
+This establishes baseline test infrastructure only. No autonomous issue, merge,
+promotion, release or deployment was produced by this bootstrap. The full E2E
+remains unverified until AI-SDLC performs those transitions itself.
