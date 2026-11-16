@@ -89,6 +89,33 @@ Initial console creation uses Helm-rendered manifests with create-only API
 writes, so a concurrent Deployment causes a conflict instead of an overwrite. This is initial infrastructure setup, not an AI-SDLC workflow
 stage: autonomous requests still enter only through issues.
 
+An installer-owned Konflux cluster can host the baseline beside the build
+infrastructure. Select it explicitly after AI-SDLC has installed its frozen
+Saferus runtime there:
+
+```bash
+./saferus test-environment --provider podman \
+  --ai-sdlc-cluster ai-sdlc-konflux-reviewed
+./saferus verify-environment --provider podman \
+  --ai-sdlc-cluster ai-sdlc-konflux-reviewed
+```
+
+The selector derives the matching AI-SDLC state at
+`~/.local/state/ai-sdlc/ai-sdlc-konflux-reviewed` and separate application custody
+at `~/.local/state/saferus/ai-sdlc-konflux-reviewed-production`. Explicit
+`--ai-sdlc-state` and `--state` paths remain supported. The cluster name is
+validated before deriving paths. Setup requires the original Konflux ownership,
+Saferus installation scope and runtime namespace UID/creation nonce to match the
+live API before any application namespace creation. A name or directory alone
+cannot authorize adoption. This remains initial synthetic infrastructure setup,
+not an autonomous promotion or an assurance of production readiness.
+
+Browser and pressure checks accept the same selector, for example
+`python3 -m tools.verify_browser --ai-sdlc-cluster ai-sdlc-konflux-reviewed
+--output /tmp/saferus-konflux-browser` and
+`python3 -m tools.verify_console_pressure --ai-sdlc-cluster
+ai-sdlc-konflux-reviewed --output /tmp/saferus-konflux-pressure.json`.
+
 To verify the browser against this environment with normal certificate checks:
 
 ```bash

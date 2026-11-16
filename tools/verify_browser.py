@@ -26,9 +26,10 @@ def main():
     parser.add_argument('--ai-sdlc-state',type=Path)
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--provider',default='podman',choices=['podman','docker'])
+    parser.add_argument('--ai-sdlc-cluster',default='ai-sdlc-saferus')
     args=parser.parse_args()
-    if args.state is None:
-        args.state=Path.home()/'.local/state/saferus'/('ai-sdlc-production' if args.ai_sdlc_state else 'demo')
+    from tools.environment_selection import configure, DEFAULT_CLUSTER
+    configure(args,external=bool(args.ai_sdlc_state) or args.ai_sdlc_cluster!=DEFAULT_CLUSTER)
     if args.ai_sdlc_state:
         from tools.test_environment import Environment
         if not (args.state/'environment-ownership.json').exists():raise ValueError('No installed test environment')

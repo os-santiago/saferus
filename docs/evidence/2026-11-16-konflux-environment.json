@@ -1,0 +1,79 @@
+{
+  "date": "2026-11-16",
+  "scope": "explicit Konflux test-production baseline; administrative setup only",
+  "clusterVersion": "v1.36.4",
+  "selection": "--ai-sdlc-cluster ai-sdlc-konflux-reviewed",
+  "aiSDLCState": "~/.local/state/ai-sdlc/ai-sdlc-konflux-reviewed",
+  "applicationState": "~/.local/state/saferus/ai-sdlc-konflux-reviewed-production",
+  "ownership": {
+    "cluster": "ai-sdlc-konflux-reviewed",
+    "clusterUID": "73198ec7-6964-45d9-bf51-6512e96c2452",
+    "namespace": "ai-sdlc-production",
+    "namespaceUID": "9d4439de-e912-47af-986b-e39d87008dca"
+  },
+  "coldInstallAndReapply": "passed",
+  "verification": {
+    "observedAt": "2026-11-16T10:14:00.395233+00:00",
+    "status": "passed",
+    "scope": "real-isolated-kubernetes-vault-demo",
+    "tlsMinimum": "1.3",
+    "engine": "OpenBao 2.7.2",
+    "agentless": true,
+    "kvRead": true,
+    "unauthenticatedDenied": true,
+    "crossPathDenied": true,
+    "readerWriteDenied": true,
+    "keyExportDenied": true,
+    "wrongAudienceDenied": true,
+    "wrongServiceAccountDenied": true,
+    "encryptionRoundtrip": true,
+    "tamperingRejected": true,
+    "revocationEnforced": true,
+    "auditRedactionChecked": true,
+    "tls12Rejected": true,
+    "untrustedCertificateRejected": true,
+    "workloadTokenTTLSeconds": 60,
+    "autonomousAISDLCE2E": false,
+    "productionAssurance": false,
+    "realWorkloadConsole": true,
+    "projectedWorkloadIdentity": true,
+    "positiveNegativePositiveNetworkProbe": true,
+    "consoleImage": "localhost/saferus-console@sha256:15cf1ab23f143c3e46ad86dded0d8e459e91fa05817fef4012b3c0b8f0227933",
+    "consoleRuntimeUID": "35f57a3b-1e6e-47b4-a9c5-5cac8826c9f9",
+    "consoleGeneration": 1
+  },
+  "browser": {
+    "status": "passed",
+    "desktop": true,
+    "mobile": true,
+    "realWorkloadAPI": true,
+    "tlsTrust": "normal Firefox X.509 verification; only demo CA added to a disposable NSS profile",
+    "autonomousAISDLCE2E": false
+  },
+  "pressure": {
+    "status": "passed",
+    "requests": 20,
+    "concurrency": 8,
+    "bursts": 2,
+    "verifiedAndRevoked": 6,
+    "boundedRejections429": 14,
+    "recoveryChecks": 2,
+    "successfulMilliseconds": {
+      "min": 24.11,
+      "median": 25.77,
+      "max": 28.55
+    },
+    "tls": "normal X.509 verification with the demo CA; TLS 1.3 minimum",
+    "scope": "20 fixed synthetic requests over loopback kubectl port-forward; not a capacity or percentile benchmark",
+    "autonomousAISDLCE2E": false,
+    "console": {
+      "uid": "35f57a3b-1e6e-47b4-a9c5-5cac8826c9f9",
+      "generation": 1,
+      "image": "localhost/saferus-console@sha256:15cf1ab23f143c3e46ad86dded0d8e459e91fa05817fef4012b3c0b8f0227933"
+    }
+  },
+  "pythonHelmTests": 41,
+  "helmLint": "passed",
+  "autonomousAISDLCE2E": false,
+  "productionAssurance": false
+}
