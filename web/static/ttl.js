@@ -1,22 +1,4 @@
 export function formatTTL(seconds) {
   if (!Number.isSafeInteger(seconds) || seconds < 0) return 'Unavailable';
-  if (seconds === 0) return '0 seconds';
-  
-  let remaining = seconds;
-  const days = Math.floor(remaining / 86400);
-  remaining = remaining % 86400;
-  
-  const hours = Math.floor(remaining / 3600);
-  remaining = remaining % 3600;
-  
-  const minutes = Math.floor(remaining / 60);
-  const secs = remaining % 60;
-  
-  const parts = [];
-  if (days > 0) parts.push(`${days} ${days === 1 ? 'day' : 'days'}`);
-  if (hours > 0) parts.push(`${hours} ${hours === 1 ? 'hour' : 'hours'}`);
-  if (minutes > 0) parts.push(`${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`);
-  if (secs > 0) parts.push(`${secs} ${secs === 1 ? 'second' : 'seconds'}`);
-  
-  return parts.join(' ');
+  return `${seconds} seconds`;
 }
