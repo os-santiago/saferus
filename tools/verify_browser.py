@@ -52,7 +52,7 @@ def main():
                 page.get_by_role('button',name='Run verification').click()
                 expect(page.get_by_role('status')).to_contain_text('Verified.',timeout=15000)
                 expect(page.locator('#algorithm')).to_have_text('AES-256-GCM')
-                expect(page.locator('#ttl')).to_have_text('60 seconds')
+                expect(page.locator('#ttl')).to_have_text('1 minute')
                 if not page.evaluate('document.documentElement.scrollWidth <= innerWidth'):
                     raise ValueError('Horizontal overflow in '+name)
                 page.screenshot(path=str(args.output/(name+'.png')),full_page=True)
